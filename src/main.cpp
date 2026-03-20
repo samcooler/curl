@@ -41,18 +41,47 @@ uint16_t programSelector;
 uint16_t programStartStopBtn;
 uint16_t programStatusLabel;
 uint16_t paramSliders[MAX_PARAMS];
-uint16_t paramLabels[MAX_PARAMS];
 
 // Playlist state
 int selectedPlaylist = 0;
 bool playlistRunning = false;
 int currentEntry = 0;
 unsigned long entryStartTime = 0;
+
+// Playlist editor state
+int editEntry = 0;  // cursor into the selected playlist's entries
+
+// Playlist ESPUI control IDs
 uint16_t playlistSelector;
 uint16_t playlistStartStopBtn;
 uint16_t playlistStatusLabel;
+uint16_t plEntryListLabel;
+uint16_t plNewNameInput;
+uint16_t plAddProgramSelect;
+uint16_t plAddDurationInput;
+uint16_t plEditDurationSlider;
+uint16_t plEntryParamSliders[MAX_PARAMS];
 
 unsigned long lastUiUpdate = 0;
+bool playlistUIDirty = false;  // deferred UI refresh flag
+bool programUIDirty = false;   // deferred program status refresh
+
+// Build HTML status string with program name and all params
+String buildProgramStatus(int progIdx, const char* prefix = "&#9654; ") {
+  Program& p = programs[progIdx];
+  String s = prefix;
+  s += p.name;
+  for (int i = 0; i < p.numParams; i++) {
+    s += "<br>&nbsp;&nbsp;";
+    s += p.params[i].name;
+    s += ": ";
+    if (p.params[i].step >= 1.0)
+      s += String((int)p.params[i].value);
+    else
+      s += String(p.params[i].value, 1);
+  }
+  return s;
+}
 
 // --- Solenoid helpers ---
 
@@ -138,15 +167,12 @@ void showParamsForProgram(int progIdx) {
   for (int i = 0; i < MAX_PARAMS; i++) {
     if (i < p.numParams) {
       ESPUI.updateSlider(paramSliders[i], (int)p.params[i].value);
-      ESPUI.updateLabel(paramLabels[i], String(p.params[i].value, 0));
       ESPUI.updateVisibility(paramSliders[i], true);
-      ESPUI.updateVisibility(paramLabels[i], true);
       // Update slider label text via the control
       ESPUI.getControl(paramSliders[i])->label = p.params[i].name;
       ESPUI.updateControl(paramSliders[i]);
     } else {
       ESPUI.updateVisibility(paramSliders[i], false);
-      ESPUI.updateVisibility(paramLabels[i], false);
     }
   }
 }
@@ -191,13 +217,11 @@ void programStartStopCallback(Control* sender, int type) {
   if (type == B_DOWN) {
     if (programRunning) {
       stopCurrentProgram();
-      ESPUI.updateLabel(programStatusLabel, "Stopped");
+      ESPUI.print(programStatusLabel, "&#9632; Stopped");
       Serial.println("Program stopped");
     } else {
       startProgram(selectedProgram);
-      char buf[48];
-      snprintf(buf, sizeof(buf), "Running: %s", programs[selectedProgram].name);
-      ESPUI.updateLabel(programStatusLabel, buf);
+      ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
     }
   }
 }
@@ -208,32 +232,120 @@ void paramSliderCallback(Control* sender, int type) {
     if (sender->id == paramSliders[i]) {
       float val = sender->value.toFloat();
       programs[selectedProgram].params[i].value = val;
-      ESPUI.updateLabel(paramLabels[i], String(val, 0));
       break;
     }
+  }
+  // Update status with current params if running
+  if (programRunning) {
+    programUIDirty = true;
   }
 }
 
 // --- Playlist helpers ---
 
+// Build a text summary of the playlist entries
+void updateEntryListLabel() {
+  if (numPlaylists == 0) {
+    ESPUI.print(plEntryListLabel, "(no playlists)");
+    return;
+  }
+  Playlist& pl = playlists[selectedPlaylist];
+  String text = "";
+  for (int i = 0; i < pl.numEntries; i++) {
+    if (i == editEntry)
+      text += "<b>&#9654; " + String(i + 1) + ". " + programs[pl.entries[i].programIndex].name + " (" + String(pl.entries[i].durationMs / 1000) + "s)</b>";
+    else
+      text += "&nbsp;&nbsp;" + String(i + 1) + ". " + programs[pl.entries[i].programIndex].name + " (" + String(pl.entries[i].durationMs / 1000) + "s)";
+    text += "<br>";
+  }
+  if (pl.numEntries == 0) text = "(empty)";
+  ESPUI.print(plEntryListLabel, text);
+}
+
+void showEditEntryParams() {
+  if (numPlaylists == 0) return;
+  Playlist& pl = playlists[selectedPlaylist];
+  if (editEntry < 0 || editEntry >= pl.numEntries) {
+    ESPUI.getControl(plEditDurationSlider)->label = "Duration";
+    ESPUI.updateControl(plEditDurationSlider);
+    ESPUI.updateSlider(plEditDurationSlider, 0);
+    for (int i = 0; i < MAX_PARAMS; i++) {
+      ESPUI.updateVisibility(plEntryParamSliders[i], false);
+    }
+    return;
+  }
+  PlaylistEntry& e = pl.entries[editEntry];
+  Program& prog = programs[e.programIndex];
+
+  // Update duration slider label to show entry context
+  static char durLabelBuf[48];
+  snprintf(durLabelBuf, sizeof(durLabelBuf), "%d. %s — Duration (s)", editEntry + 1, prog.name);
+  ESPUI.getControl(plEditDurationSlider)->label = durLabelBuf;
+  ESPUI.updateControl(plEditDurationSlider);
+  ESPUI.updateSlider(plEditDurationSlider, e.durationMs / 1000);
+
+  for (int i = 0; i < MAX_PARAMS; i++) {
+    if (i < prog.numParams) {
+      float val = (e.paramValues[i] < 0) ? prog.params[i].defaultValue : e.paramValues[i];
+      ESPUI.updateSlider(plEntryParamSliders[i], (int)val);
+      ESPUI.getControl(plEntryParamSliders[i])->label = prog.params[i].name;
+      ESPUI.updateControl(plEntryParamSliders[i]);
+      ESPUI.updateVisibility(plEntryParamSliders[i], true);
+    } else {
+      ESPUI.updateVisibility(plEntryParamSliders[i], false);
+    }
+  }
+}
+
+void refreshPlaylistUI() {
+  updateEntryListLabel();
+  showEditEntryParams();
+}
+
+void rebuildPlaylistSelector() {
+  // ESPUI doesn't support removing options, so we update the label text
+  // The selector was built with MAX_PLAYLISTS options; show/hide via value
+  // Actually ESPUI doesn't support dynamic option changes well.
+  // We'll just update the status to remind user to reboot for selector changes.
+  // The entry list label is the primary navigation.
+}
+
 void startPlaylistEntry(int entryIdx) {
   Playlist& pl = playlists[selectedPlaylist];
   currentEntry = entryIdx;
   entryStartTime = millis();
-  int progIdx = pl.entries[entryIdx].programIndex;
+  PlaylistEntry& e = pl.entries[entryIdx];
+  int progIdx = e.programIndex;
+
+  // Apply per-entry param overrides
+  Program& prog = programs[progIdx];
+  for (int i = 0; i < prog.numParams; i++) {
+    if (e.paramValues[i] >= 0) {
+      prog.params[i].value = e.paramValues[i];
+    } else {
+      prog.params[i].value = prog.params[i].defaultValue;
+    }
+  }
+
   startProgram(progIdx);
-  char buf[64];
-  snprintf(buf, sizeof(buf), "%s — %s (%d/%d)",
-    pl.name, programs[progIdx].name, entryIdx + 1, pl.numEntries);
-  ESPUI.updateLabel(playlistStatusLabel, buf);
-  ESPUI.updateLabel(programStatusLabel, String("Running: ") + programs[progIdx].name);
+  char buf[96];
+  snprintf(buf, sizeof(buf), "&#9654; %s [%d/%d] %s  0s / %lus",
+    pl.name, entryIdx + 1, pl.numEntries, programs[progIdx].name, e.durationMs / 1000);
+  String plStatus = String(buf) + "<br>" + buildProgramStatus(progIdx, "");
+  ESPUI.print(playlistStatusLabel, plStatus);
+  ESPUI.print(programStatusLabel, buildProgramStatus(progIdx));
 }
 
 // --- Playlist callbacks ---
 
 void playlistSelectCallback(Control* sender, int type) {
-  selectedPlaylist = sender->value.toInt();
-  Serial.printf("Selected playlist: %s\n", playlists[selectedPlaylist].name);
+  int idx = sender->value.toInt();
+  if (idx >= 0 && idx < numPlaylists) {
+    selectedPlaylist = idx;
+    editEntry = 0;
+    playlistUIDirty = true;
+    Serial.printf("Selected playlist: %s\n", playlists[idx].name);
+  }
 }
 
 void playlistStartStopCallback(Control* sender, int type) {
@@ -241,13 +353,125 @@ void playlistStartStopCallback(Control* sender, int type) {
     if (playlistRunning) {
       playlistRunning = false;
       stopCurrentProgram();
-      ESPUI.updateLabel(playlistStatusLabel, "Stopped");
-      ESPUI.updateLabel(programStatusLabel, "Stopped");
+      ESPUI.print(playlistStatusLabel, "&#9632; Stopped");
+      ESPUI.print(programStatusLabel, "&#9632; Stopped");
       Serial.println("Playlist stopped");
     } else {
-      playlistRunning = true;
-      startPlaylistEntry(0);
-      Serial.printf("Playlist started: %s\n", playlists[selectedPlaylist].name);
+      if (numPlaylists > 0 && playlists[selectedPlaylist].numEntries > 0) {
+        playlistRunning = true;
+        startPlaylistEntry(0);
+        Serial.printf("Playlist started: %s\n", playlists[selectedPlaylist].name);
+      }
+    }
+  }
+}
+
+void plNewPlaylistCallback(Control* sender, int type) {
+  if (type == B_DOWN) {
+    Control* nameCtrl = ESPUI.getControl(plNewNameInput);
+    String name = nameCtrl->value;
+    if (name.length() > 0 && numPlaylists < MAX_PLAYLISTS) {
+      int idx = createNewPlaylist(name.c_str());
+      if (idx >= 0) {
+        selectedPlaylist = idx;
+        editEntry = 0;
+        playlistUIDirty = true;
+        Serial.printf("Created playlist: %s\n", name.c_str());
+      }
+    }
+  }
+}
+
+void plDeletePlaylistCallback(Control* sender, int type) {
+  if (type == B_DOWN && numPlaylists > 0) {
+    Serial.printf("Deleted playlist: %s\n", playlists[selectedPlaylist].name);
+    deletePlaylistFromNVS(selectedPlaylist);
+    if (selectedPlaylist >= numPlaylists) selectedPlaylist = numPlaylists - 1;
+    if (selectedPlaylist < 0) selectedPlaylist = 0;
+    editEntry = 0;
+    playlistUIDirty = true;
+  }
+}
+
+void plAddEntryCallback(Control* sender, int type) {
+  if (type == B_DOWN && numPlaylists > 0) {
+    Control* progCtrl = ESPUI.getControl(plAddProgramSelect);
+    Control* durCtrl = ESPUI.getControl(plAddDurationInput);
+    int progIdx = progCtrl->value.toInt();
+    unsigned long dur = durCtrl->value.toInt() * 1000UL;
+    if (dur < 1000) dur = 5000;
+    playlistAddEntry(selectedPlaylist, progIdx, dur);
+    playlistUIDirty = true;
+  }
+}
+
+void plRemoveEntryCallback(Control* sender, int type) {
+  if (type == B_DOWN && numPlaylists > 0) {
+    Playlist& pl = playlists[selectedPlaylist];
+    if (editEntry >= 0 && editEntry < pl.numEntries) {
+      playlistRemoveEntry(selectedPlaylist, editEntry);
+      if (editEntry >= pl.numEntries && pl.numEntries > 0) editEntry = pl.numEntries - 1;
+      playlistUIDirty = true;
+    }
+  }
+}
+
+void plMoveUpCallback(Control* sender, int type) {
+  if (type == B_DOWN && numPlaylists > 0 && editEntry > 0) {
+    playlistMoveEntry(selectedPlaylist, editEntry, -1);
+    editEntry--;
+    playlistUIDirty = true;
+  }
+}
+
+void plMoveDownCallback(Control* sender, int type) {
+  if (type == B_DOWN && numPlaylists > 0) {
+    Playlist& pl = playlists[selectedPlaylist];
+    if (editEntry < pl.numEntries - 1) {
+      playlistMoveEntry(selectedPlaylist, editEntry, 1);
+      editEntry++;
+      playlistUIDirty = true;
+    }
+  }
+}
+
+void plPrevEntryCallback(Control* sender, int type) {
+  if (type == B_DOWN && editEntry > 0) {
+    editEntry--;
+    playlistUIDirty = true;
+  }
+}
+
+void plNextEntryCallback(Control* sender, int type) {
+  if (type == B_DOWN && numPlaylists > 0) {
+    Playlist& pl = playlists[selectedPlaylist];
+    if (editEntry < pl.numEntries - 1) {
+      editEntry++;
+      playlistUIDirty = true;
+    }
+  }
+}
+
+void plEditDurationCallback(Control* sender, int type) {
+  if (numPlaylists == 0) return;
+  Playlist& pl = playlists[selectedPlaylist];
+  if (editEntry < 0 || editEntry >= pl.numEntries) return;
+  int secs = sender->value.toInt();
+  pl.entries[editEntry].durationMs = secs * 1000UL;
+  savePlaylistToNVS(selectedPlaylist);
+  playlistUIDirty = true;
+}
+
+void plEntryParamCallback(Control* sender, int type) {
+  if (numPlaylists == 0) return;
+  Playlist& pl = playlists[selectedPlaylist];
+  if (editEntry < 0 || editEntry >= pl.numEntries) return;
+  for (int i = 0; i < MAX_PARAMS; i++) {
+    if (sender->id == plEntryParamSliders[i]) {
+      float val = sender->value.toFloat();
+      pl.entries[editEntry].paramValues[i] = val;
+      savePlaylistToNVS(selectedPlaylist);
+      break;
     }
   }
 }
@@ -282,6 +506,9 @@ void setup() {
     setSolenoid(i, false);
   }
   Serial.println("Solenoids initialized");
+
+  // Load playlists from NVS (or create defaults)
+  initPlaylists();
 
   // Connect to WiFi network
   WiFi.mode(WIFI_STA);
@@ -399,30 +626,80 @@ void setup() {
       String((int)pVal), ControlColor::Alizarin, programsTab, paramSliderCallback);
     ESPUI.addControl(ControlType::Min, "", String((int)pMin), ControlColor::None, paramSliders[i]);
     ESPUI.addControl(ControlType::Max, "", String((int)pMax), ControlColor::None, paramSliders[i]);
-    paramLabels[i] = ESPUI.addControl(ControlType::Label, "Value",
-      String(pVal, 0), ControlColor::None, paramSliders[i]);
 
     if (i >= programs[0].numParams) {
       ESPUI.updateVisibility(paramSliders[i], false);
-      ESPUI.updateVisibility(paramLabels[i], false);
     }
   }
 
   // --- Playlists tab ---
   uint16_t playlistsTab = ESPUI.addControl(ControlType::Tab, "Playlists", "Playlists");
 
+  // Playlist selector + start/stop + status in one card
   playlistSelector = ESPUI.addControl(ControlType::Select, "Playlist",
     "0", ControlColor::Wetasphalt, playlistsTab, playlistSelectCallback);
-  for (int i = 0; i < NUM_PLAYLISTS; i++) {
+  for (int i = 0; i < numPlaylists; i++) {
     ESPUI.addControl(ControlType::Option, playlists[i].name,
       String(i), ControlColor::Alizarin, playlistSelector);
   }
-
-  playlistStartStopBtn = ESPUI.addControl(ControlType::Button, "Playlist Control", "START / STOP",
-    ControlColor::Emerald, playlistsTab, playlistStartStopCallback);
-
+  playlistStartStopBtn = ESPUI.addControl(ControlType::Button, "", "START / STOP",
+    ControlColor::Emerald, playlistSelector, playlistStartStopCallback);
   playlistStatusLabel = ESPUI.addControl(ControlType::Label, "Status",
-    "Stopped", ControlColor::Turquoise, playlistsTab);
+    "Stopped", ControlColor::None, playlistSelector);
+
+  // Entry list + nav buttons in one card
+  plEntryListLabel = ESPUI.addControl(ControlType::Label, "Entries",
+    "", ControlColor::Wetasphalt, playlistsTab);
+  ESPUI.addControl(ControlType::Button, "", "\xe2\x97\x80 PREV",
+    ControlColor::Peterriver, plEntryListLabel, plPrevEntryCallback);
+  ESPUI.addControl(ControlType::Button, "", "NEXT \xe2\x96\xb6",
+    ControlColor::Peterriver, plEntryListLabel, plNextEntryCallback);
+  ESPUI.addControl(ControlType::Button, "", "\xe2\x96\xb2 UP",
+    ControlColor::Carrot, plEntryListLabel, plMoveUpCallback);
+  ESPUI.addControl(ControlType::Button, "", "\xe2\x96\xbc DN",
+    ControlColor::Carrot, plEntryListLabel, plMoveDownCallback);
+  ESPUI.addControl(ControlType::Button, "", "\xe2\x9c\x95 DEL",
+    ControlColor::Alizarin, plEntryListLabel, plRemoveEntryCallback);
+
+  // Duration slider (label updated dynamically to show entry context)
+  plEditDurationSlider = ESPUI.addControl(ControlType::Slider, "Duration (s)",
+    "20", ControlColor::Alizarin, playlistsTab, plEditDurationCallback);
+  ESPUI.addControl(ControlType::Min, "", "1", ControlColor::None, plEditDurationSlider);
+  ESPUI.addControl(ControlType::Max, "", "120", ControlColor::None, plEditDurationSlider);
+
+  // Per-entry param sliders
+  for (int i = 0; i < MAX_PARAMS; i++) {
+    plEntryParamSliders[i] = ESPUI.addControl(ControlType::Slider, "",
+      "0", ControlColor::Alizarin, playlistsTab, plEntryParamCallback);
+    ESPUI.addControl(ControlType::Min, "", "0", ControlColor::None, plEntryParamSliders[i]);
+    ESPUI.addControl(ControlType::Max, "", "100", ControlColor::None, plEntryParamSliders[i]);
+    ESPUI.updateVisibility(plEntryParamSliders[i], false);
+  }
+
+  // Add entry: program select + duration + button in one card
+  plAddProgramSelect = ESPUI.addControl(ControlType::Select, "Add Entry",
+    "0", ControlColor::Wetasphalt, playlistsTab, [](Control*, int){});
+  for (int i = 0; i < NUM_PROGRAMS; i++) {
+    ESPUI.addControl(ControlType::Option, programs[i].name,
+      String(i), ControlColor::Alizarin, plAddProgramSelect);
+  }
+  plAddDurationInput = ESPUI.addControl(ControlType::Number, "Duration (s)",
+    "20", ControlColor::None, plAddProgramSelect, [](Control*, int){});
+  ESPUI.addControl(ControlType::Min, "", "1", ControlColor::None, plAddDurationInput);
+  ESPUI.addControl(ControlType::Max, "", "120", ControlColor::None, plAddDurationInput);
+  ESPUI.addControl(ControlType::Button, "", "ADD",
+    ControlColor::Emerald, plAddProgramSelect, plAddEntryCallback);
+
+  // New / Delete playlist in one card
+  plNewNameInput = ESPUI.addControl(ControlType::Text, "New Playlist",
+    "", ControlColor::Wetasphalt, playlistsTab, [](Control*, int){});
+  ESPUI.addControl(ControlType::Button, "", "CREATE",
+    ControlColor::Emerald, plNewNameInput, plNewPlaylistCallback);
+  ESPUI.addControl(ControlType::Button, "", "DELETE SELECTED",
+    ControlColor::Alizarin, plNewNameInput, plDeletePlaylistCallback);
+
+  // Initialize the entry list display
+  refreshPlaylistUI();
 
   // Start ESPUI
   ESPUI.begin("Curl Controller");
@@ -431,6 +708,20 @@ void setup() {
 
 void loop() {
   unsigned long now = millis();
+
+  // Deferred program status refresh
+  if (programUIDirty) {
+    programUIDirty = false;
+    if (programRunning) {
+      ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
+    }
+  }
+
+  // Deferred playlist UI refresh (from callbacks)
+  if (playlistUIDirty) {
+    playlistUIDirty = false;
+    refreshPlaylistUI();
+  }
 
   // Run test sequence (non-blocking)
   if (testRunning && now >= testNextTime) {
@@ -489,17 +780,21 @@ void loop() {
       ESPUI.updateLabel(wifiStatusLabel, "Disconnected");
     }
 
-    // Playlist time remaining
+    // Live playlist status
     if (playlistRunning) {
       Playlist& pl = playlists[selectedPlaylist];
-      unsigned long elapsed = now - entryStartTime;
-      unsigned long duration = pl.entries[currentEntry].durationMs;
-      unsigned long remaining = (elapsed < duration) ? (duration - elapsed) / 1000 : 0;
+      unsigned long elapsed = (now - entryStartTime) / 1000;
+      unsigned long total = pl.entries[currentEntry].durationMs / 1000;
+      if (elapsed > total) elapsed = total;
       int progIdx = pl.entries[currentEntry].programIndex;
-      char buf[80];
-      snprintf(buf, sizeof(buf), "%s — %s (%d/%d) — %lus left",
-        pl.name, programs[progIdx].name, currentEntry + 1, pl.numEntries, remaining);
-      ESPUI.updateLabel(playlistStatusLabel, buf);
+      char buf[96];
+      snprintf(buf, sizeof(buf), "&#9654; %s [%d/%d] %s  %lus / %lus",
+        pl.name, currentEntry + 1, pl.numEntries, programs[progIdx].name, elapsed, total);
+      String plStatus = String(buf) + "<br>" + buildProgramStatus(progIdx, "");
+      ESPUI.print(playlistStatusLabel, plStatus);
+      ESPUI.print(programStatusLabel, buildProgramStatus(progIdx));
+    } else if (programRunning) {
+      ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
     }
   }
 }

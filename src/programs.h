@@ -67,7 +67,8 @@ namespace RandomFire {
           if (random(100) < (int)density) {
             setSolenoid(i, true);
             channelOn[i] = true;
-            nextToggle[i] = now + random((int)minInt, (int)maxInt / 2);
+            int onMax = max((int)minInt + 1, (int)(maxInt / 2));
+            nextToggle[i] = now + random((int)minInt, onMax);
           } else {
             nextToggle[i] = now + random((int)minInt, (int)maxInt);
           }
@@ -85,7 +86,8 @@ namespace RandomFire {
         if (random(100) < (int)modPct) {
           setModulator(true);
           modOn = true;
-          modNextToggle = now + random((int)minInt, (int)maxInt / 2);
+          int onMax = max((int)minInt + 1, (int)(maxInt / 2));
+          modNextToggle = now + random((int)minInt, onMax);
         } else {
           modNextToggle = now + random((int)minInt, (int)maxInt);
         }
@@ -376,8 +378,8 @@ Program programs[] = {
     RandomFire::init, RandomFire::update, RandomFire::stop,
     {
       {"Density %",      30, 30, 0, 100, 5},
-      {"Min Interval",  200, 200, 50, 2000, 50},
-      {"Max Interval", 1000, 1000, 100, 5000, 100},
+      {"Min Interval",  300, 300, 250, 2000, 50},
+      {"Max Interval", 1000, 1000, 500, 5000, 100},
       {"Modulator %",    50, 50, 0, 100, 5},
     },
     4
@@ -386,7 +388,7 @@ Program programs[] = {
     "Chase",
     Chase::init, Chase::update, Chase::stop,
     {
-      {"Speed ms",   200, 200, 50, 2000, 25},
+      {"Speed ms",   250, 250, 250, 2000, 25},
       {"Width",        2, 2, 1, 6, 1},
       {"Direction",    0, 0, 0, 2, 1},
       {"Modulator",    1, 1, 0, 1, 1},
@@ -397,7 +399,7 @@ Program programs[] = {
     "Wave",
     Wave::init, Wave::update, Wave::stop,
     {
-      {"Speed ms", 1000, 1000, 100, 5000, 100},
+      {"Speed ms", 1000, 1000, 250, 5000, 100},
       {"Width",       6, 6, 1, 12, 1},
       {"Modulator",   1, 1, 0, 1, 1},
       {"", 0, 0, 0, 0, 0},
@@ -408,8 +410,8 @@ Program programs[] = {
     "All Pulse",
     AllPulse::init, AllPulse::update, AllPulse::stop,
     {
-      {"On Time ms",  500, 500, 50, 5000, 50},
-      {"Off Time ms", 500, 500, 50, 5000, 50},
+      {"On Time ms",  500, 500, 250, 5000, 50},
+      {"Off Time ms", 500, 500, 250, 5000, 50},
       {"Mod Pulse",     1, 1, 0, 1, 1},
       {"", 0, 0, 0, 0, 0},
     },
@@ -419,7 +421,7 @@ Program programs[] = {
     "Pairs",
     Pairs::init, Pairs::update, Pairs::stop,
     {
-      {"Speed ms", 300, 300, 100, 3000, 50},
+      {"Speed ms", 300, 300, 250, 3000, 50},
       {"Mode",       0, 0, 0, 2, 1},
       {"Modulator",  1, 1, 0, 1, 1},
       {"", 0, 0, 0, 0, 0},
@@ -430,7 +432,7 @@ Program programs[] = {
     "Burst",
     Burst::init, Burst::update, Burst::stop,
     {
-      {"Fire Rate ms",  50, 50, 20, 500, 10},
+      {"Fire Rate ms", 250, 250, 250, 500, 10},
       {"Pause ms",    3000, 3000, 500, 10000, 250},
       {"Channels",      12, 12, 1, 12, 1},
       {"Modulator",      1, 1, 0, 1, 1},
@@ -442,7 +444,7 @@ Program programs[] = {
     Rainfall::init, Rainfall::update, Rainfall::stop,
     {
       {"Density %",      15, 15, 1, 100, 5},
-      {"Drop ms",       150, 150, 50, 1000, 25},
+      {"Drop ms",       300, 300, 250, 1000, 25},
       {"Modulator",       0, 0, 0, 1, 1},
       {"", 0, 0, 0, 0, 0},
     },
