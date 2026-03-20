@@ -73,7 +73,11 @@ String buildProgramStatus(int progIdx, const char* prefix = "&#9654; ") {
   s += p.name;
   for (int i = 0; i < p.numParams; i++) {
     s += "<br>&nbsp;&nbsp;";
-    s += p.params[i].name;
+    // Use short name (before " — ") for compact display
+    String pname = p.params[i].name;
+    int dash = pname.indexOf(" —");
+    if (dash > 0) pname = pname.substring(0, dash);
+    s += pname;
     s += ": ";
     if (p.params[i].step >= 1.0)
       s += String((int)p.params[i].value);
@@ -700,6 +704,20 @@ void setup() {
 
   // Initialize the entry list display
   refreshPlaylistUI();
+
+  // Inject custom CSS via a label with a <style> tag (no setCustomCSS in v2.2.4)
+  static const char cssHack[] =
+    "<style>"
+    ".section{padding:0.5em !important;margin-bottom:0.4em !important}"
+    ".section h3{font-size:1.0em !important;margin-bottom:0.2em !important}"
+    ".section span{font-size:0.9em !important}"
+    ".section button{padding:0.3em 0.8em !important;font-size:0.85em !important;margin:0.15em !important}"
+    ".section select,.section input{font-size:0.9em !important;padding:0.2em !important}"
+    "#tabsnav{padding:0.3em !important}"
+    "#tabsnav button{padding:0.3em 0.6em !important;font-size:0.9em !important}"
+    "</style>";
+  uint16_t cssLabel = ESPUI.addControl(ControlType::Label, "", cssHack, ControlColor::None, Control::noParent);
+  ESPUI.setPanelStyle(cssLabel, "display:none;");
 
   // Start ESPUI
   ESPUI.begin("Curl Controller");
