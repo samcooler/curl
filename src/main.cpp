@@ -30,6 +30,10 @@ const int TEST_ON_MS = 500;
 const int TEST_OFF_MS = 300;
 bool testPhaseOn = true;
 
+// Mode system
+enum Mode { MODE_STOP = 0, MODE_PROGRAM = 1, MODE_PLAYLIST = 2 };
+Mode currentMode = MODE_STOP;
+
 // ESPUI control IDs
 uint16_t uptimeLabel;
 uint16_t ipLabel;
@@ -38,28 +42,23 @@ uint16_t solenoidSwitches[NUM_SOLENOIDS];
 uint16_t modulatorSwitch;
 uint16_t testButton;
 
-// Program state
-int selectedProgram = 0;
-bool programRunning = false;
+// Programs tab controls
+uint16_t modeSelector;
+uint16_t playlistSelector;
 uint16_t programSelector;
-uint16_t programStartStopBtn;
 uint16_t programStatusLabel;
 uint16_t paramSliders[MAX_PARAMS];
+uint16_t paramSliderMin[MAX_PARAMS];
+uint16_t paramSliderMax[MAX_PARAMS];
 
-// Playlist state
-int selectedPlaylist = 0;
-bool playlistRunning = false;
+// Program/playlist state
+int selectedProgram = 0;
+int selectedPlaylist = 1;  // default to Moderate
 int currentEntry = 0;
 unsigned long entryStartTime = 0;
 
-// Playlist ESPUI control IDs
-uint16_t playlistSelector;
-uint16_t playlistStartStopBtn;
-uint16_t playlistStatusLabel;
-uint16_t playlistEntryListLabel;
-
 unsigned long lastUiUpdate = 0;
-bool programUIDirty = false;   // deferred program status refresh
+bool programUIDirty = false;
 
 // Build HTML status string with program name and all params
 String buildProgramStatus(int progIdx, const char* prefix = "&#9654; ") {
@@ -165,9 +164,13 @@ void showParamsForProgram(int progIdx) {
   Program& p = programs[progIdx];
   for (int i = 0; i < MAX_PARAMS; i++) {
     if (i < p.numParams) {
+      // Update slider min/max bounds for this program's parameter
+      ESPUI.getControl(paramSliderMin[i])->value = String((int)p.params[i].min);
+      ESPUI.updateControl(paramSliderMin[i]);
+      ESPUI.getControl(paramSliderMax[i])->value = String((int)p.params[i].max);
+      ESPUI.updateControl(paramSliderMax[i]);
       ESPUI.updateSlider(paramSliders[i], (int)p.params[i].value);
       ESPUI.updateVisibility(paramSliders[i], true);
-      // Update slider label text via the control
       ESPUI.getControl(paramSliders[i])->label = p.params[i].name;
       ESPUI.updateControl(paramSliders[i]);
     } else {
@@ -176,91 +179,17 @@ void showParamsForProgram(int progIdx) {
   }
 }
 
-void stopCurrentProgram() {
-  if (programRunning) {
-    programs[selectedProgram].stop();
-    programRunning = false;
-  }
-  allSolenoidsOff();
-  setModulator(false);
-}
-
-void resetParamsToDefaults(int progIdx) {
-  Program& p = programs[progIdx];
-  for (int i = 0; i < p.numParams; i++) {
-    p.params[i].value = p.params[i].defaultValue;
-  }
-}
-
 void startProgram(int progIdx) {
-  stopCurrentProgram();
+  // Stop previous program cleanly
+  if (currentMode == MODE_PROGRAM || currentMode == MODE_PLAYLIST) {
+    programs[selectedProgram].stop();
+    allSolenoidsOff();
+    setModulator(false);
+  }
   selectedProgram = progIdx;
-  Program& p = programs[progIdx];
   showParamsForProgram(progIdx);
-  p.init();
-  programRunning = true;
-  Serial.printf("Started program: %s\n", p.name);
-}
-
-// --- Program callbacks ---
-
-void programSelectCallback(Control* sender, int type) {
-  int idx = sender->value.toInt();
-  selectedProgram = idx;
-  showParamsForProgram(idx);
-  Serial.printf("Selected program: %s\n", programs[idx].name);
-}
-
-void programStartStopCallback(Control* sender, int type) {
-  if (type == B_DOWN) {
-    if (programRunning) {
-      stopCurrentProgram();
-      ESPUI.print(programStatusLabel, "&#9632; Stopped");
-      Serial.println("Program stopped");
-    } else {
-      startProgram(selectedProgram);
-      ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
-    }
-  }
-}
-
-void paramSliderCallback(Control* sender, int type) {
-  // Find which slider
-  for (int i = 0; i < MAX_PARAMS; i++) {
-    if (sender->id == paramSliders[i]) {
-      float val = sender->value.toFloat();
-      programs[selectedProgram].params[i].value = val;
-      break;
-    }
-  }
-  // Update status with current params if running
-  if (programRunning) {
-    programUIDirty = true;
-  }
-}
-
-// --- Playlist helpers ---
-
-void updatePlaylistEntryList() {
-  if (numPlaylists == 0) {
-    ESPUI.print(playlistEntryListLabel, "(no playlists)");
-    return;
-  }
-  Playlist& pl = playlists[selectedPlaylist];
-  String text = "<b>" + String(pl.name) + "</b><br>";
-  for (int i = 0; i < pl.numEntries; i++) {
-    if (playlistRunning && i == currentEntry)
-      text += "<b>&#9654; ";
-    else
-      text += "&nbsp;&nbsp;";
-    text += String(i + 1) + ". " + programs[pl.entries[i].programIndex].name;
-    text += " (" + String(pl.entries[i].durationMs / 1000) + "s)";
-    if (playlistRunning && i == currentEntry)
-      text += "</b>";
-    text += "<br>";
-  }
-  if (pl.numEntries == 0) text += "(empty)";
-  ESPUI.print(playlistEntryListLabel, text);
+  programs[progIdx].init();
+  Serial.printf("Started program: %s\n", programs[progIdx].name);
 }
 
 void startPlaylistEntry(int entryIdx) {
@@ -269,62 +198,103 @@ void startPlaylistEntry(int entryIdx) {
   entryStartTime = millis();
   int progIdx = pl.entries[entryIdx].programIndex;
 
+  // Copy entry's custom params to program
+  for (int i = 0; i < programs[progIdx].numParams; i++) {
+    programs[progIdx].params[i].value = pl.entries[entryIdx].params[i];
+  }
+
   startProgram(progIdx);
-  char buf[96];
-  snprintf(buf, sizeof(buf), "&#9654; %s [%d/%d] %s  0s / %lus",
-    pl.name, entryIdx + 1, pl.numEntries, programs[progIdx].name,
-    pl.entries[entryIdx].durationMs / 1000);
-  String plStatus = String(buf) + "<br>" + buildProgramStatus(progIdx, "");
-  ESPUI.print(playlistStatusLabel, plStatus);
-  ESPUI.print(programStatusLabel, buildProgramStatus(progIdx));
-  updatePlaylistEntryList();
+  ESPUI.print(programSelector, String(progIdx));
 }
 
-// --- Playlist callbacks ---
+void stopEverything() {
+  if (currentMode != MODE_STOP) {
+    programs[selectedProgram].stop();
+  }
+  currentMode = MODE_STOP;
+  testRunning = false;
+  allSolenoidsOff();
+  setModulator(false);
+  ESPUI.print(programStatusLabel, "Stopped");
+  ESPUI.print(modeSelector, "0");
+}
 
-void playlistSelectCallback(Control* sender, int type) {
+// --- Callbacks ---
+
+void modeSelectCallback(Control* sender, int type) {
   int idx = sender->value.toInt();
-  if (idx >= 0 && idx < numPlaylists) {
-    selectedPlaylist = idx;
-    updatePlaylistEntryList();
+  Mode newMode = (Mode)idx;
+  if (newMode == currentMode) return;
+
+  // Stop current activity
+  if (currentMode != MODE_STOP) {
+    programs[selectedProgram].stop();
+    allSolenoidsOff();
+    setModulator(false);
+  }
+  testRunning = false;
+  currentMode = newMode;
+
+  switch (currentMode) {
+    case MODE_STOP:
+      ESPUI.print(programStatusLabel, "Stopped");
+      break;
+    case MODE_PROGRAM:
+      startProgram(selectedProgram);
+      ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
+      break;
+    case MODE_PLAYLIST:
+      if (playlists[selectedPlaylist].numEntries > 0) {
+        startPlaylistEntry(0);
+      }
+      break;
   }
 }
 
-void playlistStartStopCallback(Control* sender, int type) {
-  if (type == B_DOWN) {
-    if (playlistRunning) {
-      playlistRunning = false;
-      stopCurrentProgram();
-      ESPUI.print(playlistStatusLabel, "&#9632; Stopped");
-      ESPUI.print(programStatusLabel, "&#9632; Stopped");
-      updatePlaylistEntryList();
-    } else {
-      if (numPlaylists > 0 && playlists[selectedPlaylist].numEntries > 0) {
-        playlistRunning = true;
-        startPlaylistEntry(0);
-      }
+void playlistSelectCallback(Control* sender, int type) {
+  int idx = sender->value.toInt();
+  if (idx >= 0 && idx < NUM_PLAYLISTS) {
+    selectedPlaylist = idx;
+    if (currentMode == MODE_PLAYLIST && playlists[idx].numEntries > 0) {
+      startPlaylistEntry(0);
     }
   }
 }
 
-void plResetDefaultsCallback(Control* sender, int type) {
-  if (type != B_UP) return;
-  if (playlistRunning) return;
-  createDefaultPlaylists();
-  selectedPlaylist = 0;
-  updatePlaylistEntryList();
-  Serial.println("Playlists reset to defaults");
+void programSelectCallback(Control* sender, int type) {
+  int idx = sender->value.toInt();
+  if (idx < 0 || idx >= NUM_PROGRAMS) return;
+  if (currentMode == MODE_PLAYLIST) return; // playlist controls the program
+  selectedProgram = idx;
+  showParamsForProgram(idx);
+  if (currentMode == MODE_PROGRAM) {
+    startProgram(idx);
+    ESPUI.print(programStatusLabel, buildProgramStatus(idx));
+  }
 }
 
-// Stop everything — programs, playlists, solenoids
+void paramSliderCallback(Control* sender, int type) {
+  for (int i = 0; i < MAX_PARAMS; i++) {
+    if (sender->id == paramSliders[i]) {
+      programs[selectedProgram].params[i].value = sender->value.toFloat();
+      break;
+    }
+  }
+  if (currentMode == MODE_PROGRAM) {
+    // Restart program with new params
+    programs[selectedProgram].stop();
+    allSolenoidsOff();
+    setModulator(false);
+    programs[selectedProgram].init();
+  }
+  if (currentMode != MODE_STOP) {
+    programUIDirty = true;
+  }
+}
+
 void stopAllCallback(Control* sender, int type) {
   if (type == B_DOWN) {
-    playlistRunning = false;
-    stopCurrentProgram();
-    testRunning = false;
-    ESPUI.print(playlistStatusLabel, "&#9632; Stopped");
-    ESPUI.print(programStatusLabel, "&#9632; Stopped");
-    updatePlaylistEntryList();
+    stopEverything();
     Serial.println("STOP ALL");
   }
 }
@@ -359,9 +329,6 @@ void setup() {
     setSolenoid(i, false);
   }
   Serial.println("Solenoids initialized");
-
-  // Load playlists from NVS (or create defaults)
-  initPlaylists();
 
   // Connect to WiFi network
   WiFi.mode(WIFI_STA);
@@ -452,19 +419,30 @@ void setup() {
   // --- Programs tab ---
   uint16_t programsTab = ESPUI.addControl(ControlType::Tab, "Programs", "Programs");
 
-  // Program selector dropdown
+  // Mode selector: Stop / Program / Playlist
+  modeSelector = ESPUI.addControl(ControlType::Select, "Mode",
+    "0", ControlColor::Wetasphalt, programsTab, modeSelectCallback);
+  ESPUI.addControl(ControlType::Option, "Stop", "0", ControlColor::None, modeSelector);
+  ESPUI.addControl(ControlType::Option, "Program", "1", ControlColor::None, modeSelector);
+  ESPUI.addControl(ControlType::Option, "Playlist", "2", ControlColor::None, modeSelector);
+
+  // Playlist selector
+  playlistSelector = ESPUI.addControl(ControlType::Select, "Playlist",
+    "1", ControlColor::Wetasphalt, programsTab, playlistSelectCallback);
+  for (int i = 0; i < NUM_PLAYLISTS; i++) {
+    ESPUI.addControl(ControlType::Option, playlists[i].name,
+      String(i), ControlColor::None, playlistSelector);
+  }
+
+  // Program selector
   programSelector = ESPUI.addControl(ControlType::Select, "Program",
     "0", ControlColor::Wetasphalt, programsTab, programSelectCallback);
   for (int i = 0; i < NUM_PROGRAMS; i++) {
     ESPUI.addControl(ControlType::Option, programs[i].name,
-      String(i), ControlColor::Alizarin, programSelector);
+      String(i), ControlColor::None, programSelector);
   }
 
-  // Start/Stop button
-  programStartStopBtn = ESPUI.addControl(ControlType::Button, "Program Control", "START / STOP",
-    ControlColor::Emerald, programsTab, programStartStopCallback);
-
-  // Stop All button — stops playlist, program, test, everything
+  // Stop All button
   ESPUI.addControl(ControlType::Button, "", "STOP ALL",
     ControlColor::Alizarin, programsTab, stopAllCallback);
 
@@ -481,35 +459,13 @@ void setup() {
 
     paramSliders[i] = ESPUI.addControl(ControlType::Slider, pName,
       String((int)pVal), ControlColor::Alizarin, programsTab, paramSliderCallback);
-    ESPUI.addControl(ControlType::Min, "", String((int)pMin), ControlColor::None, paramSliders[i]);
-    ESPUI.addControl(ControlType::Max, "", String((int)pMax), ControlColor::None, paramSliders[i]);
+    paramSliderMin[i] = ESPUI.addControl(ControlType::Min, "", String((int)pMin), ControlColor::None, paramSliders[i]);
+    paramSliderMax[i] = ESPUI.addControl(ControlType::Max, "", String((int)pMax), ControlColor::None, paramSliders[i]);
 
     if (i >= programs[0].numParams) {
       ESPUI.updateVisibility(paramSliders[i], false);
     }
   }
-
-  // --- Playlists tab (minimal — selector, start/stop, status, entry list, reset) ---
-  uint16_t playlistsTab = ESPUI.addControl(ControlType::Tab, "Playlists", "Playlists");
-
-  playlistSelector = ESPUI.addControl(ControlType::Select, "Playlist",
-    "0", ControlColor::Wetasphalt, playlistsTab, playlistSelectCallback);
-  for (int i = 0; i < numPlaylists; i++) {
-    ESPUI.addControl(ControlType::Option, playlists[i].name,
-      String(i), ControlColor::Alizarin, playlistSelector);
-  }
-  playlistStartStopBtn = ESPUI.addControl(ControlType::Button, "", "START / STOP",
-    ControlColor::Emerald, playlistSelector, playlistStartStopCallback);
-  playlistStatusLabel = ESPUI.addControl(ControlType::Label, "Status",
-    "Stopped", ControlColor::None, playlistSelector);
-
-  playlistEntryListLabel = ESPUI.addControl(ControlType::Label, "Entries",
-    "", ControlColor::Wetasphalt, playlistsTab);
-
-  ESPUI.addControl(ControlType::Button, "Reset", "RESET TO DEFAULTS",
-    ControlColor::Carrot, playlistsTab, plResetDefaultsCallback);
-
-  updatePlaylistEntryList();
 
   // Inject custom CSS via a label with a <style> tag (no setCustomCSS in v2.2.4)
   static const char cssHack[] =
@@ -529,16 +485,12 @@ void setup() {
   ESPUI.begin("Curl Controller");
   Serial.println("ESPUI started");
 
-  // Auto-start playlist named "default" if it exists
-  for (int i = 0; i < numPlaylists; i++) {
-    if (strcmp(playlists[i].name, "default") == 0 && playlists[i].numEntries > 0) {
-      selectedPlaylist = i;
-      playlistRunning = true;
-      startPlaylistEntry(0);
-      Serial.printf("Auto-started playlist: %s\n", playlists[i].name);
-      break;
-    }
-  }
+  // Auto-start Moderate playlist
+  selectedPlaylist = 1;
+  currentMode = MODE_PLAYLIST;
+  startPlaylistEntry(0);
+  ESPUI.print(modeSelector, "2");
+  Serial.println("Auto-started Moderate playlist");
 }
 
 void loop() {
@@ -547,7 +499,7 @@ void loop() {
   // Deferred program status refresh
   if (programUIDirty) {
     programUIDirty = false;
-    if (programRunning) {
+    if (currentMode != MODE_STOP) {
       ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
     }
   }
@@ -557,17 +509,14 @@ void loop() {
     if (testPhaseOn) {
       setSolenoid(testIndex, true);
       ESPUI.updateSwitcher(solenoidSwitches[testIndex], true);
-      Serial.printf("Test: Solenoid %d ON\n", testIndex);
       testNextTime = now + TEST_ON_MS;
       testPhaseOn = false;
     } else {
       setSolenoid(testIndex, false);
       ESPUI.updateSwitcher(solenoidSwitches[testIndex], false);
-      Serial.printf("Test: Solenoid %d OFF\n", testIndex);
       testIndex++;
       if (testIndex >= NUM_SOLENOIDS) {
         testRunning = false;
-        Serial.println("Test sequence complete");
       } else {
         testNextTime = now + TEST_OFF_MS;
         testPhaseOn = true;
@@ -576,12 +525,12 @@ void loop() {
   }
 
   // Run active program
-  if (programRunning) {
+  if (currentMode == MODE_PROGRAM || currentMode == MODE_PLAYLIST) {
     programs[selectedProgram].update(now);
   }
 
-  // Playlist runner — advance to next entry when duration expires
-  if (playlistRunning) {
+  // Playlist advancement
+  if (currentMode == MODE_PLAYLIST) {
     Playlist& pl = playlists[selectedPlaylist];
     unsigned long elapsed = now - entryStartTime;
     unsigned long duration = pl.entries[currentEntry].durationMs;
@@ -609,23 +558,19 @@ void loop() {
       ESPUI.updateLabel(wifiStatusLabel, "Disconnected");
     }
 
-    // Live playlist status
-    if (playlistRunning) {
+    if (currentMode == MODE_PLAYLIST) {
       Playlist& pl = playlists[selectedPlaylist];
       unsigned long elapsed = (now - entryStartTime) / 1000;
       unsigned long total = pl.entries[currentEntry].durationMs / 1000;
       if (elapsed > total) elapsed = total;
       int progIdx = pl.entries[currentEntry].programIndex;
-      char buf[96];
-      snprintf(buf, sizeof(buf), "&#9654; %s [%d/%d] %s  %lus / %lus",
+      char buf2[96];
+      snprintf(buf2, sizeof(buf2), "&#9654; %s [%d/%d] %s  %lus / %lus",
         pl.name, currentEntry + 1, pl.numEntries, programs[progIdx].name, elapsed, total);
-      String plStatus = String(buf) + "<br>" + buildProgramStatus(progIdx, "");
-      ESPUI.print(playlistStatusLabel, plStatus);
-      ESPUI.print(programStatusLabel, buildProgramStatus(progIdx));
-    } else if (programRunning) {
+      String status = String(buf2) + "<br>" + buildProgramStatus(progIdx, "");
+      ESPUI.print(programStatusLabel, status);
+    } else if (currentMode == MODE_PROGRAM) {
       ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
-    } else {
-      ESPUI.print(programStatusLabel, "Stopped");
     }
   }
 }

@@ -42,6 +42,18 @@ inline float sineFactor(unsigned long now, unsigned long startTime, float period
 
 // ============================================================
 // Program 1: Random Fire
+//
+// Each of the 12 channels independently toggles on/off on its own random
+// timer.  When a channel's timer fires, it rolls against "density %" to
+// decide whether to turn on; if it loses, it waits another random interval
+// between minInterval–maxInterval.  If it wins, it stays on for a shorter
+// random period (minInterval to maxInterval/2) before turning off again.
+//
+// Density can optionally breathe over time via a sine-wave cycle,
+// creating natural surges and lulls.  The modulator runs on its own
+// independent timer with the same density logic.
+//
+// Params: density%, minIntervalMs, maxIntervalMs, modulator%, cycleSec
 // ============================================================
 namespace RandomFire {
   unsigned long nextToggle[12];
@@ -116,7 +128,18 @@ namespace RandomFire {
 }
 
 // ============================================================
-// Program 2: Chase (modulator fires on alternating half-steps)
+// Program 2: Chase
+//
+// A "head" of 1–6 lit channels sweeps across the 12 outputs.
+// Each step is split into two half-steps at the configured speed:
+//   half-step 1 — advance the head position, modulator OFF
+//   half-step 2 — same position, modulator ON (if enabled)
+// This creates a stutter-step "push" effect on each position.
+//
+// Direction modes: 0 = left-to-right (wraps), 1 = right-to-left (wraps),
+//                  2 = bounce (reverses at ends).
+//
+// Params: speedMs, width, direction, modulator(0/1)
 // ============================================================
 namespace Chase {
   int headPos;
@@ -184,6 +207,19 @@ namespace Chase {
 
 // ============================================================
 // Program 3: Wave
+//
+// A continuous sinusoidal wave propagates across the 12 channels.
+// Each channel's on/off state is determined by sampling sin() at
+// a phase offset proportional to its position.  "Speed" controls
+// the full cycle period — lower values make the wave travel faster.
+// "Width" sets how many channels fit in one wavelength: smaller
+// values make tighter waves with more peaks visible simultaneously,
+// larger values make a single broad wave.
+//
+// Reverse flips propagation direction: 0 = bottom→top (ch 0→11),
+// 1 = top→bottom (ch 11→0).  Channel 11 is physically at the top.
+//
+// Params: speedMs, width, modulator(0/1), reverse(0/1)
 // ============================================================
 namespace Wave {
   unsigned long startTime;
@@ -197,11 +233,13 @@ namespace Wave {
     float speed = programs[2].params[0].value;
     float width = programs[2].params[1].value;
     bool mod    = programs[2].params[2].value > 0.5;
+    bool rev    = programs[2].params[3].value > 0.5;
 
     float phase = (float)(now - startTime) / speed * TWO_PI;
+    float dir   = rev ? -1.0f : 1.0f;
 
     for (int i = 0; i < 12; i++) {
-      float channelPhase = phase - (float)i / width * TWO_PI;
+      float channelPhase = phase - dir * (float)i / width * TWO_PI;
       bool on = sin(channelPhase) > 0.0;
       setSolenoid(i, on);
     }
@@ -215,7 +253,18 @@ namespace Wave {
 }
 
 // ============================================================
-// Program 4: All Pulse (separate random clocks for channels & modulator)
+// Program 4: All Pulse
+//
+// All 12 channels pulse together in unison on a single clock,
+// while the modulator runs on a separate independent clock.
+// Both clocks have ±20% random jitter on each toggle, so the
+// rhythm drifts slightly and feels organic rather than mechanical.
+//
+// Channel on-time and off-time are independently adjustable,
+// as are modulator on-time and off-time.  Equal on/off values
+// give a 50% duty cycle; short on + long off creates brief bursts.
+//
+// Params: chanOnMs, chanOffMs, modOnMs, modOffMs
 // ============================================================
 namespace AllPulse {
   unsigned long chanNextToggle;
@@ -268,6 +317,17 @@ namespace AllPulse {
 
 // ============================================================
 // Program 5: Pairs
+//
+// The 12 channels are treated as 6 symmetric pairs:
+//   pair 0 = ch 0 + ch 11,  pair 1 = ch 1 + ch 10, ... pair 5 = ch 5 + ch 6
+// Each step turns off the previous pair and lights the next one.
+//
+// Modes:  0 = inward (pairs 0→5, outside→center),
+//         1 = outward (pairs 5→0, center→outside),
+//         2 = alternate (same as inward, reserved for future bounce).
+// Only one pair is active at a time — 2 channels out of 12.
+//
+// Params: speedMs, mode, modulator(0/1)
 // ============================================================
 namespace Pairs {
   int currentPair;
@@ -311,6 +371,21 @@ namespace Pairs {
 
 // ============================================================
 // Program 6: Burst
+//
+// Fires channels sequentially (0, 1, 2, ...) one at a time at
+// "fire rate" speed.  Each new channel turns on as the previous
+// turns off, creating a rapid cascade.  After all configured
+// channels have fired, everything goes dark for the "pause"
+// duration, then the burst repeats from channel 0.
+//
+// The modulator activates during the burst and turns off during
+// the pause, giving extra flow emphasis during the active phase.
+// "Channels" controls how many of the 12 fire per burst.
+//
+// Reverse flips burst direction: 0 = bottom→top (ch 0 first),
+// 1 = top→bottom (ch 11 first).  Channel 11 is physically at the top.
+//
+// Params: fireRateMs, pauseMs, numChannels, modulator(0/1), reverse(0/1)
 // ============================================================
 namespace Burst {
   int burstIndex;
@@ -329,6 +404,7 @@ namespace Burst {
     float pauseTime  = programs[5].params[1].value;
     int numChannels  = (int)programs[5].params[2].value;
     bool mod         = programs[5].params[3].value > 0.5;
+    bool rev         = programs[5].params[4].value > 0.5;
 
     if (inPause) {
       if (now - lastStep >= (unsigned long)pauseTime) {
@@ -339,9 +415,13 @@ namespace Burst {
     } else {
       if (now - lastStep >= (unsigned long)fireRate) {
         lastStep = now;
-        if (burstIndex > 0) setSolenoid(burstIndex - 1, false);
+        if (burstIndex > 0) {
+          int prevCh = rev ? (11 - (burstIndex - 1)) : (burstIndex - 1);
+          setSolenoid(prevCh, false);
+        }
         if (burstIndex < numChannels && burstIndex < 12) {
-          setSolenoid(burstIndex, true);
+          int ch = rev ? (11 - burstIndex) : burstIndex;
+          setSolenoid(ch, true);
           burstIndex++;
         } else {
           for (int i = 0; i < 12; i++) setSolenoid(i, false);
@@ -361,13 +441,29 @@ namespace Burst {
 
 // ============================================================
 // Program 7: Rainfall
+//
+// Random independent "drops" on each channel.  Each channel runs
+// its own cycle:  when idle, it checks every ~200ms whether to
+// start a new drop (density% chance per check).  A drop stays on
+// for the configured duration, then the channel goes idle again
+// with a brief mandatory gap before the next check.
+//
+// Unlike Random Fire, drops have a fixed on-duration and clear
+// gaps between them, so the visual reads as distinct drips rather
+// than flickering.  Low density (5–15%) gives sparse gentle rain;
+// high density (50%+) creates a downpour.
+//
+// Params: density%, dropMs, modulator(0/1)
 // ============================================================
 namespace Rainfall {
   unsigned long dropEnd[12];
+  unsigned long nextCheck[12];
 
   void init() {
+    unsigned long now = millis();
     for (int i = 0; i < 12; i++) {
       dropEnd[i] = 0;
+      nextCheck[i] = now + random(0, 500);  // stagger initial checks
       setSolenoid(i, false);
     }
   }
@@ -378,11 +474,18 @@ namespace Rainfall {
     bool mod       = programs[6].params[2].value > 0.5;
 
     for (int i = 0; i < 12; i++) {
-      if (now >= dropEnd[i]) {
-        if (solenoidStates[i]) setSolenoid(i, false);
-        if (random(1000) < (int)(density * 10.0 / 12.0)) {
+      // Turn off expired drops, add a brief gap before next check
+      if (solenoidStates[i] && now >= dropEnd[i]) {
+        setSolenoid(i, false);
+        nextCheck[i] = now + (unsigned long)(duration * 0.5) + random(0, (int)duration);
+      }
+      // Try to start a new drop (only when idle and check interval elapsed)
+      if (!solenoidStates[i] && now >= nextCheck[i]) {
+        if (random(100) < (int)density) {
           setSolenoid(i, true);
           dropEnd[i] = now + (unsigned long)duration;
+        } else {
+          nextCheck[i] = now + 100 + random(0, 200);
         }
       }
     }
@@ -396,7 +499,21 @@ namespace Rainfall {
 }
 
 // ============================================================
-// Program 8: Sparkle — brief random flashes, activity follows sine
+// Program 8: Sparkle
+//
+// Brief random flashes across the 12 channels, with overall
+// activity level breathing via a sine wave.  The sine cycle
+// modulates "target active" from 1 up to maxFlashes.  Each
+// channel that finishes a flash enters a "gap" cooldown before
+// it can flash again, preventing rapid re-triggers.
+//
+// At sine peak, many channels flash simultaneously; at the
+// trough, only 1–2 are active.  This creates a natural
+// breathing/twinkling effect.  Flash duration controls how
+// long each individual flash stays on; gap controls the
+// minimum cooldown between flashes on the same channel.
+//
+// Params: maxFlashes, flashMs, gapMs, cycleSec, modulator(0/1)
 // ============================================================
 namespace Sparkle {
   unsigned long flashEnd[12];
@@ -457,7 +574,20 @@ namespace Sparkle {
 }
 
 // ============================================================
-// Program 9: Stack — build up channels, hold, drain, sine speed
+// Program 9: Stack
+//
+// Channels accumulate one at a time (0→1→2→...→11), pause when
+// all 12 are full, then drain one at a time back to empty, pause
+// again, and repeat.  The step speed is modulated by a sine wave:
+// at sine peak the steps are 0.3x the base speed (fast), at the
+// trough they're 1.7x (slow), creating organic acceleration and
+// deceleration.
+//
+// Direction: 0 = up (ch 0 first), 1 = down (ch 11 first),
+//            2 = alternate (always refills from same direction).
+// The modulator activates when more than half the channels are on.
+//
+// Params: stepMs, holdMs, direction, cycleSec, modulator(0/1)
 // ============================================================
 namespace Stack {
   int level;       // how many channels are on (0..12)
@@ -532,8 +662,24 @@ namespace Stack {
 }
 
 // ============================================================
-// Program 10: Juggle — multiple chase heads at different speeds,
-//             overall activity modulated by sine
+// Program 10: Juggle
+//
+// Three independent chase heads circle the 12 channels at
+// different speeds.  Head 0 runs at (base - spread), head 1 at
+// base speed, and head 2 at (base + spread).  All three speeds
+// are further modulated by a sine wave — at the peak everything
+// accelerates (0.4x), at the trough it slows (1.6x).
+//
+// Channels light up wherever any head currently sits; when two
+// heads overlap the same channel it just stays on.  Typically
+// 3 channels are lit at once, but overlaps reduce that.  The
+// speed differences cause the heads to converge and diverge,
+// creating evolving patterns.
+//
+// Reverse flips head movement: 0 = bottom→top (ch 0→11),
+// 1 = top→bottom (ch 11→0).  Channel 11 is physically at the top.
+//
+// Params: speedMs, spreadMs, cycleSec, modulator(0/1), reverse(0/1)
 // ============================================================
 namespace Juggle {
   static const int NUM_HEADS = 3;
@@ -556,6 +702,7 @@ namespace Juggle {
     float spread    = programs[9].params[1].value;
     float cycleSec  = programs[9].params[2].value;
     bool mod        = programs[9].params[3].value > 0.5;
+    bool rev        = programs[9].params[4].value > 0.5;
 
     float sf = sineFactor(now, startTime, cycleSec);
 
@@ -571,7 +718,10 @@ namespace Juggle {
 
       if (now >= headNext[h]) {
         headNext[h] = now + (unsigned long)effSpeed;
-        headPos[h] = (headPos[h] + 1) % 12;
+        if (rev)
+          headPos[h] = (headPos[h] - 1 + 12) % 12;
+        else
+          headPos[h] = (headPos[h] + 1) % 12;
       }
       channelHit[headPos[h]] = true;
     }
@@ -580,6 +730,90 @@ namespace Juggle {
       setSolenoid(i, channelHit[i]);
     }
     setModulator(mod && sf > 0.5);
+  }
+
+  void stop() {
+    for (int i = 0; i < 12; i++) setSolenoid(i, false);
+    setModulator(false);
+  }
+}
+
+// ============================================================
+// Program 11: Drift
+//
+// A tight cluster of 1–3 adjacent channels sweeps top→bottom
+// then bottom→top in a sawtooth bounce.  The sweep speed varies
+// sinusoidally:  slow → moderate → fast → fastest → fast →
+// moderate → slow, creating a breathing rhythm of movement.
+//
+// At the sine peak, step time is 0.25x the base speed (fast);
+// at the trough, it's 1.75x (slow).  "Width" controls how many
+// adjacent channels are lit as the cluster moves.  The modulator
+// fires on every other step for extra flow emphasis when enabled.
+//
+// Start direction: 0 = starts falling (top→bottom first),
+// 1 = starts rising (bottom→top first).
+//
+// Params: speedMs, width, cycleSec, modulator(0/1), startDir(0/1)
+// ============================================================
+namespace Drift {
+  int pos;
+  int dir;       // +1 = moving up, -1 = moving down
+  bool modStep;
+  unsigned long lastStep;
+  unsigned long startTime;
+
+  void init() {
+    startTime = millis();
+    bool startUp = programs[10].params[4].value > 0.5;
+    if (startUp) {
+      pos = 0;
+      dir = 1;
+    } else {
+      pos = 11;
+      dir = -1;
+    }
+    modStep = false;
+    lastStep = millis();
+    for (int i = 0; i < 12; i++) setSolenoid(i, false);
+    setModulator(false);
+  }
+
+  void update(unsigned long now) {
+    float baseSpeed = programs[10].params[0].value;
+    int width       = (int)programs[10].params[1].value;
+    float cycleSec  = programs[10].params[2].value;
+    bool modEnabled = programs[10].params[3].value > 0.5;
+
+    // Sine modulates step speed: range 0.25x (fast) to 1.75x (slow)
+    float sf = sineFactor(now, startTime, cycleSec);
+    float effectiveSpeed = baseSpeed * (0.25 + 1.5 * (1.0 - sf));
+    if (effectiveSpeed < 100) effectiveSpeed = 100;
+
+    if (now - lastStep >= (unsigned long)effectiveSpeed) {
+      lastStep = now;
+
+      // Advance and bounce at ends
+      pos += dir;
+      if (pos >= 12) { pos = 10; dir = -1; }
+      if (pos < 0)   { pos = 1;  dir = 1;  }
+
+      // Light the cluster (width channels starting at pos)
+      for (int i = 0; i < 12; i++) {
+        bool on = false;
+        for (int w = 0; w < width; w++) {
+          int ch = pos + (dir > 0 ? w : -w);
+          if (ch < 0) ch += 12;
+          if (ch >= 12) ch -= 12;
+          if (i == ch) { on = true; break; }
+        }
+        setSolenoid(i, on);
+      }
+
+      // Modulator on alternating steps
+      modStep = !modStep;
+      setModulator(modEnabled && modStep);
+    }
   }
 
   void stop() {
@@ -626,11 +860,11 @@ Program programs[] = {
       {"Speed ms — full wave cycle period",  1000, 1000, 250, 5000, 100},
       {"Width — channels per wavelength",       6, 6, 1, 12, 1},
       {"Modulator — on/off",                    1, 1, 0, 1, 1},
-      {"", 0, 0, 0, 0, 0},
+      {"Reverse — 0:up 1:down",                 0, 0, 0, 1, 1},
       {"", 0, 0, 0, 0, 0},
       {"", 0, 0, 0, 0, 0},
     },
-    3
+    4
   },
   {
     "All Pulse",
@@ -666,10 +900,10 @@ Program programs[] = {
       {"Pause ms — gap between bursts",          3000, 3000, 500, 10000, 250},
       {"Channels — how many fire per burst",       12, 12, 1, 12, 1},
       {"Modulator — on during burst",               1, 1, 0, 1, 1},
-      {"", 0, 0, 0, 0, 0},
+      {"Reverse — 0:up 1:down",                     0, 0, 0, 1, 1},
       {"", 0, 0, 0, 0, 0},
     },
-    4
+    5
   },
   {
     "Rainfall",
@@ -718,10 +952,23 @@ Program programs[] = {
       {"Spread ms — speed difference per head",  100, 100, 0, 500, 25},
       {"Cycle s — sine wave speed variation",      8, 8, 0, 60, 1},
       {"Modulator — on at sine peak",              1, 1, 0, 1, 1},
-      {"", 0, 0, 0, 0, 0},
+      {"Reverse — 0:up 1:down",                    0, 0, 0, 1, 1},
       {"", 0, 0, 0, 0, 0},
     },
-    4
+    5
+  },
+  {
+    "Drift",
+    Drift::init, Drift::update, Drift::stop,
+    {
+      {"Speed ms — base step time",               400, 400, 100, 2000, 25},
+      {"Width — number of lit channels",             2, 2, 1, 3, 1},
+      {"Cycle s — sine speed variation period",     10, 10, 2, 60, 1},
+      {"Modulator — on alternating steps",           1, 1, 0, 1, 1},
+      {"Start Dir — 0:fall first 1:rise first",   0, 0, 0, 1, 1},
+      {"", 0, 0, 0, 0, 0},
+    },
+    5
   },
 };
 
