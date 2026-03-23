@@ -14,9 +14,13 @@ PCA9539 pca9539(0x77);
 const int NUM_SOLENOIDS = 12;
 bool solenoidStates[NUM_SOLENOIDS] = {};
 
-// Modulator — solenoid that doubles flow when active (inverted pin logic)
-const int MODULATOR_PIN = LED_BUILTIN;
+// Modulator — solenoid that doubles flow when active
+const int MODULATOR_PIN = 3;
 bool modulatorState = false;
+
+// Output mapping: logical channel index → physical PCA9539 pin index
+// Edit this array to match your wiring
+const int outputMap[NUM_SOLENOIDS] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
 
 // Test sequence state
 bool testRunning = false;
@@ -91,12 +95,12 @@ String buildProgramStatus(int progIdx, const char* prefix = "&#9654; ") {
 
 void setSolenoid(int index, bool state) {
   solenoidStates[index] = state;
-  pca9539.digitalWrite(index, state ? HIGH : LOW);
+  pca9539.digitalWrite(outputMap[index], state ? HIGH : LOW);
 }
 
 void setModulator(bool state) {
   modulatorState = state;
-  digitalWrite(MODULATOR_PIN, state ? LOW : HIGH);  // inverted
+  digitalWrite(MODULATOR_PIN, state ? HIGH : LOW);
 }
 
 void allSolenoidsOff() {
@@ -480,6 +484,16 @@ void plEntryParamCallback(Control* sender, int type) {
   }
 }
 
+void plResetDefaultsCallback(Control* sender, int type) {
+  if (type != B_UP) return;
+  if (playlistRunning) return;  // don't reset while playing
+  createDefaultPlaylists();
+  selectedPlaylist = 0;
+  editEntry = 0;
+  playlistUIDirty = true;
+  Serial.println("Playlists reset to defaults");
+}
+
 void setup() {
   Serial.begin(115200);
   delay(1000);
@@ -489,9 +503,9 @@ void setup() {
   pinMode(D3, OUTPUT);
   digitalWrite(D3, HIGH);
 
-  // Modulator pin (inverted: HIGH = off)
+  // Modulator pin
   pinMode(MODULATOR_PIN, OUTPUT);
-  digitalWrite(MODULATOR_PIN, HIGH);
+  digitalWrite(MODULATOR_PIN, LOW);
 
   // Configure solenoid pins as outputs, all off
   pca9539.pinMode(pca_A0, OUTPUT);
@@ -701,6 +715,8 @@ void setup() {
     ControlColor::Emerald, plNewNameInput, plNewPlaylistCallback);
   ESPUI.addControl(ControlType::Button, "", "DELETE SELECTED",
     ControlColor::Alizarin, plNewNameInput, plDeletePlaylistCallback);
+  ESPUI.addControl(ControlType::Button, "", "RESET TO DEFAULTS",
+    ControlColor::Carrot, plNewNameInput, plResetDefaultsCallback);
 
   // Initialize the entry list display
   refreshPlaylistUI();
