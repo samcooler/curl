@@ -1,0 +1,60 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <ESPUI.h>
+
+const char* ssid = "Blossom 2.4 GHz";
+const char* password = "pollinate";
+
+uint16_t uptimeLabel;
+uint16_t heapLabel;
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("=== ESPUI MINIMAL TEST ===");
+
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to ");
+  Serial.print(ssid);
+
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println();
+
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.print("Connected! IP: ");
+    Serial.println(WiFi.localIP());
+  } else {
+    Serial.println("WiFi FAILED");
+  }
+
+  Serial.printf("Free heap before ESPUI: %u\n", ESP.getFreeHeap());
+
+  uptimeLabel = ESPUI.addControl(ControlType::Label, "Uptime", "0s", ControlColor::Turquoise);
+  heapLabel = ESPUI.addControl(ControlType::Label, "Free Heap", String(ESP.getFreeHeap()), ControlColor::Emerald);
+
+  Serial.printf("Free heap after controls: %u\n", ESP.getFreeHeap());
+
+  ESPUI.begin("Test UI");
+
+  Serial.printf("Free heap after ESPUI.begin: %u\n", ESP.getFreeHeap());
+  Serial.println("ESPUI started — check http://" + WiFi.localIP().toString());
+}
+
+void loop() {
+  static unsigned long last = 0;
+  unsigned long now = millis();
+  if (now - last >= 1000) {
+    last = now;
+    unsigned long s = now / 1000;
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lum %lus", s / 60, s % 60);
+    ESPUI.updateLabel(uptimeLabel, buf);
+    ESPUI.updateLabel(heapLabel, String(ESP.getFreeHeap()));
+    Serial.printf("Uptime: %s  Heap: %u\n", buf, ESP.getFreeHeap());
+  }
+}

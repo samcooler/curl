@@ -2,7 +2,7 @@
 #include <Preferences.h>
 #include "programs.h"
 
-#define MAX_PLAYLIST_ENTRIES 8
+#define MAX_PLAYLIST_ENTRIES 12
 #define MAX_PLAYLISTS 8
 #define PLAYLIST_NAME_LEN 20
 
@@ -76,28 +76,20 @@ void initDefaultEntry(PlaylistEntry& e, int progIdx, unsigned long durMs) {
 }
 
 void createDefaultPlaylists() {
-  // Gentle Flow
-  numPlaylists = 3;
-  strncpy(playlists[0].name, "Gentle Flow", PLAYLIST_NAME_LEN);
-  playlists[0].numEntries = 3;
-  initDefaultEntry(playlists[0].entries[0], 6, 30000);  // Rainfall
-  initDefaultEntry(playlists[0].entries[1], 2, 30000);  // Wave
-  initDefaultEntry(playlists[0].entries[2], 3, 20000);  // All Pulse
-
-  // High Energy
-  strncpy(playlists[1].name, "High Energy", PLAYLIST_NAME_LEN);
-  playlists[1].numEntries = 4;
-  initDefaultEntry(playlists[1].entries[0], 1, 15000);  // Chase
-  initDefaultEntry(playlists[1].entries[1], 5, 15000);  // Burst
-  initDefaultEntry(playlists[1].entries[2], 0, 20000);  // Random Fire
-  initDefaultEntry(playlists[1].entries[3], 4, 15000);  // Pairs
-
-  // Full Demo
-  strncpy(playlists[2].name, "Full Demo", PLAYLIST_NAME_LEN);
-  playlists[2].numEntries = 7;
-  for (int i = 0; i < 7; i++) {
-    initDefaultEntry(playlists[2].entries[i], i, 20000);
-  }
+  // default — all 10 programs in sequence, auto-starts on boot
+  numPlaylists = 1;
+  strncpy(playlists[0].name, "default", PLAYLIST_NAME_LEN);
+  playlists[0].numEntries = 10;
+  initDefaultEntry(playlists[0].entries[0], 0, 7000);   // Random Fire
+  initDefaultEntry(playlists[0].entries[1], 1, 6000);   // Chase
+  initDefaultEntry(playlists[0].entries[2], 2, 8000);   // Wave
+  initDefaultEntry(playlists[0].entries[3], 3, 5000);   // All Pulse
+  initDefaultEntry(playlists[0].entries[4], 4, 6000);   // Pairs
+  initDefaultEntry(playlists[0].entries[5], 5, 5000);   // Burst
+  initDefaultEntry(playlists[0].entries[6], 6, 7000);   // Rainfall
+  initDefaultEntry(playlists[0].entries[7], 7, 8000);   // Sparkle
+  initDefaultEntry(playlists[0].entries[8], 8, 8000);   // Stack
+  initDefaultEntry(playlists[0].entries[9], 9, 6000);   // Juggle
 
   saveAllPlaylists();
 }

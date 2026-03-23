@@ -6,8 +6,8 @@
 #include "playlists.h"
 
 // WiFi settings — connect to existing network
-const char* ssid = "HMS Honeypot";
-const char* password = "cutebutdangerous";
+const char* ssid = "Blossom 2.4 GHz";
+const char* password = "pollinate";
 
 // PCA9539 I2C GPIO expander for solenoids
 PCA9539 pca9539(0x77);
@@ -722,6 +722,17 @@ void setup() {
   // Start ESPUI
   ESPUI.begin("Curl Controller");
   Serial.println("ESPUI started");
+
+  // Auto-start playlist named "default" if it exists
+  for (int i = 0; i < numPlaylists; i++) {
+    if (strcmp(playlists[i].name, "default") == 0 && playlists[i].numEntries > 0) {
+      selectedPlaylist = i;
+      playlistRunning = true;
+      startPlaylistEntry(0);
+      Serial.printf("Auto-started playlist: %s\n", playlists[i].name);
+      break;
+    }
+  }
 }
 
 void loop() {
