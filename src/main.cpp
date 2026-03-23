@@ -30,6 +30,17 @@ const int TEST_ON_MS = 500;
 const int TEST_OFF_MS = 300;
 bool testPhaseOn = true;
 
+// Playlist cycle button (D0)
+const int BUTTON_PIN = D0;
+bool lastButtonState = HIGH;          // active-low with INPUT_PULLUP
+unsigned long lastButtonTime = 0;
+const unsigned long DEBOUNCE_MS = 50;
+
+// Confirmation pulse state: after button press, pulse N solenoids for 500ms
+bool confirmPulseActive = false;
+unsigned long confirmPulseStart = 0;
+const unsigned long CONFIRM_PULSE_MS = 500;
+
 // Mode system
 enum Mode { MODE_STOP = 0, MODE_PROGRAM = 1, MODE_PLAYLIST = 2 };
 Mode currentMode = MODE_STOP;
@@ -312,6 +323,9 @@ void setup() {
   pinMode(MODULATOR_PIN, OUTPUT);
   digitalWrite(MODULATOR_PIN, LOW);
 
+  // Playlist cycle button
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
   // Configure solenoid pins as outputs, all off
   pca9539.pinMode(pca_A0, OUTPUT);
   pca9539.pinMode(pca_A1, OUTPUT);
@@ -496,6 +510,46 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
+  // --- Playlist cycle button (D0, active-low) ---
+  bool btnState = digitalRead(BUTTON_PIN);
+  if (btnState == LOW && lastButtonState == HIGH && (now - lastButtonTime) > DEBOUNCE_MS) {
+    lastButtonTime = now;
+
+    // Stop current activity
+    if (currentMode != MODE_STOP) {
+      programs[selectedProgram].stop();
+    }
+    testRunning = false;
+    allSolenoidsOff();
+    setModulator(false);
+
+    // Advance to next playlist (wrap around)
+    selectedPlaylist = (selectedPlaylist + 1) % NUM_PLAYLISTS;
+    currentMode = MODE_PLAYLIST;
+
+    // Start confirmation pulse: light solenoids 0..(N-1) where N = ordinal
+    int ordinal = selectedPlaylist + 1;
+    for (int i = 0; i < ordinal && i < NUM_SOLENOIDS; i++) {
+      setSolenoid(i, true);
+    }
+    confirmPulseActive = true;
+    confirmPulseStart = now;
+
+    // Update UI
+    ESPUI.print(modeSelector, "2");
+    ESPUI.print(playlistSelector, String(selectedPlaylist));
+    Serial.printf("Button: switched to playlist %d (%s)\n", selectedPlaylist, playlists[selectedPlaylist].name);
+  }
+  lastButtonState = btnState;
+
+  // --- Confirmation pulse end ---
+  if (confirmPulseActive && (now - confirmPulseStart) >= CONFIRM_PULSE_MS) {
+    confirmPulseActive = false;
+    allSolenoidsOff();
+    // Now start the playlist
+    startPlaylistEntry(0);
+  }
+
   // Deferred program status refresh
   if (programUIDirty) {
     programUIDirty = false;
@@ -524,13 +578,13 @@ void loop() {
     }
   }
 
-  // Run active program
-  if (currentMode == MODE_PROGRAM || currentMode == MODE_PLAYLIST) {
+  // Run active program (skip during confirmation pulse)
+  if (!confirmPulseActive && (currentMode == MODE_PROGRAM || currentMode == MODE_PLAYLIST)) {
     programs[selectedProgram].update(now);
   }
 
-  // Playlist advancement
-  if (currentMode == MODE_PLAYLIST) {
+  // Playlist advancement (skip during confirmation pulse)
+  if (!confirmPulseActive && currentMode == MODE_PLAYLIST) {
     Playlist& pl = playlists[selectedPlaylist];
     unsigned long elapsed = now - entryStartTime;
     unsigned long duration = pl.entries[currentEntry].durationMs;
