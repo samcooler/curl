@@ -81,11 +81,12 @@ void createDefaultPlaylists() {
 }
 
 void initPlaylists() {
-  loadPlaylistsFromNVS();
-  if (numPlaylists == 0) {
-    Serial.println("No saved playlists, creating defaults");
-    createDefaultPlaylists();
-  }
+  // Force clear stale NVS data from old struct layout
+  playlistPrefs.begin("playlists", false);
+  playlistPrefs.clear();
+  playlistPrefs.end();
+  Serial.println("NVS cleared, creating default playlists");
+  createDefaultPlaylists();
   Serial.printf("Loaded %d playlists\n", numPlaylists);
 }
 

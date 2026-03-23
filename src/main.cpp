@@ -2,7 +2,6 @@
 #include <WiFi.h>
 #include <ESPUI.h>
 #include <PCA9539.h>
-#include <Adafruit_NeoPixel.h>
 #include "programs.h"
 #include "playlists.h"
 
@@ -22,10 +21,6 @@ bool modulatorState = false;
 // Output mapping: logical channel index → physical PCA9539 pin index
 // Edit this array to match your wiring
 const int outputMap[NUM_SOLENOIDS] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
-
-// Dual NeoPixel status LEDs on D6
-// LED 0 = WiFi status, LED 1 = run mode
-Adafruit_NeoPixel rgbLeds(2, D6, NEO_GRB + NEO_KHZ800);
 
 // Test sequence state
 bool testRunning = false;
@@ -339,13 +334,6 @@ void setup() {
   delay(1000);
   Serial.println("Curl controller starting");
 
-  // Status LEDs
-  rgbLeds.begin();
-  rgbLeds.setBrightness(40);
-  rgbLeds.setPixelColor(0, rgbLeds.Color(255, 60, 0));  // orange = booting
-  rgbLeds.setPixelColor(1, rgbLeds.Color(255, 60, 0));  // orange = booting
-  rgbLeds.show();
-
   // PCA9539 reset
   pinMode(D3, OUTPUT);
   digitalWrite(D3, HIGH);
@@ -380,8 +368,6 @@ void setup() {
   WiFi.begin(ssid, password);
   Serial.print("Connecting to ");
   Serial.print(ssid);
-  rgbLeds.setPixelColor(0, rgbLeds.Color(0, 80, 255));  // blue = connecting
-  rgbLeds.show();
 
   unsigned long startAttempt = millis();
   while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
@@ -393,12 +379,9 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("Connected! IP: ");
     Serial.println(WiFi.localIP());
-    rgbLeds.setPixelColor(0, rgbLeds.Color(0, 255, 40));  // green = connected
   } else {
-    Serial.println("WiFi connection failed — starting anyway, will keep trying");
-    rgbLeds.setPixelColor(0, rgbLeds.Color(255, 0, 0));  // red = no WiFi
+    Serial.println("WiFi connection failed - starting anyway");
   }
-  rgbLeds.show();
 
   // --- ESPUI Setup ---
 
@@ -622,20 +605,9 @@ void loop() {
     if (WiFi.status() == WL_CONNECTED) {
       ESPUI.updateLabel(wifiStatusLabel, "Connected");
       ESPUI.updateLabel(ipLabel, WiFi.localIP().toString());
-      rgbLeds.setPixelColor(0, rgbLeds.Color(0, 255, 40));   // green
     } else {
       ESPUI.updateLabel(wifiStatusLabel, "Disconnected");
-      rgbLeds.setPixelColor(0, rgbLeds.Color(255, 0, 0));    // red
     }
-
-    // LED 1: run mode
-    if (playlistRunning)
-      rgbLeds.setPixelColor(1, rgbLeds.Color(0, 200, 255));  // cyan = playlist
-    else if (programRunning)
-      rgbLeds.setPixelColor(1, rgbLeds.Color(180, 0, 255));  // purple = program
-    else
-      rgbLeds.setPixelColor(1, rgbLeds.Color(30, 30, 30));   // dim white = idle
-    rgbLeds.show();
 
     // Live playlist status
     if (playlistRunning) {
