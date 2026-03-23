@@ -9,7 +9,6 @@
 struct PlaylistEntry {
   int programIndex;
   unsigned long durationMs;
-  float paramValues[MAX_PARAMS];  // per-entry param overrides (-1 = use default)
 };
 
 struct Playlist {
@@ -22,8 +21,6 @@ Playlist playlists[MAX_PLAYLISTS];
 int numPlaylists = 0;
 
 Preferences playlistPrefs;
-
-// --- Persistence ---
 
 void savePlaylistToNVS(int idx) {
   playlistPrefs.begin("playlists", false);
@@ -46,7 +43,7 @@ void saveAllPlaylists() {
 }
 
 void loadPlaylistsFromNVS() {
-  playlistPrefs.begin("playlists", true);  // read-only
+  playlistPrefs.begin("playlists", true);
   numPlaylists = playlistPrefs.getInt("count", 0);
   if (numPlaylists > MAX_PLAYLISTS) numPlaylists = MAX_PLAYLISTS;
   for (int i = 0; i < numPlaylists; i++) {
@@ -59,7 +56,6 @@ void loadPlaylistsFromNVS() {
 
 void deletePlaylistFromNVS(int idx) {
   if (idx < 0 || idx >= numPlaylists) return;
-  // Shift playlists down
   for (int i = idx; i < numPlaylists - 1; i++) {
     playlists[i] = playlists[i + 1];
   }
@@ -67,30 +63,20 @@ void deletePlaylistFromNVS(int idx) {
   saveAllPlaylists();
 }
 
-// --- Default playlists (first boot) ---
-
-void initDefaultEntry(PlaylistEntry& e, int progIdx, unsigned long durMs) {
-  e.programIndex = progIdx;
-  e.durationMs = durMs;
-  for (int i = 0; i < MAX_PARAMS; i++) e.paramValues[i] = -1;  // use defaults
-}
-
 void createDefaultPlaylists() {
-  // default — all 10 programs in sequence, auto-starts on boot
   numPlaylists = 1;
   strncpy(playlists[0].name, "default", PLAYLIST_NAME_LEN);
   playlists[0].numEntries = 10;
-  initDefaultEntry(playlists[0].entries[0], 0, 7000);   // Random Fire
-  initDefaultEntry(playlists[0].entries[1], 1, 6000);   // Chase
-  initDefaultEntry(playlists[0].entries[2], 2, 8000);   // Wave
-  initDefaultEntry(playlists[0].entries[3], 3, 5000);   // All Pulse
-  initDefaultEntry(playlists[0].entries[4], 4, 6000);   // Pairs
-  initDefaultEntry(playlists[0].entries[5], 5, 5000);   // Burst
-  initDefaultEntry(playlists[0].entries[6], 6, 7000);   // Rainfall
-  initDefaultEntry(playlists[0].entries[7], 7, 8000);   // Sparkle
-  initDefaultEntry(playlists[0].entries[8], 8, 8000);   // Stack
-  initDefaultEntry(playlists[0].entries[9], 9, 6000);   // Juggle
-
+  playlists[0].entries[0] = {0, 7000};   // Random Fire
+  playlists[0].entries[1] = {1, 6000};   // Chase
+  playlists[0].entries[2] = {2, 8000};   // Wave
+  playlists[0].entries[3] = {3, 5000};   // All Pulse
+  playlists[0].entries[4] = {4, 6000};   // Pairs
+  playlists[0].entries[5] = {5, 5000};   // Burst
+  playlists[0].entries[6] = {6, 7000};   // Rainfall
+  playlists[0].entries[7] = {7, 8000};   // Sparkle
+  playlists[0].entries[8] = {8, 8000};   // Stack
+  playlists[0].entries[9] = {9, 6000};   // Juggle
   saveAllPlaylists();
 }
 
@@ -101,46 +87,5 @@ void initPlaylists() {
     createDefaultPlaylists();
   }
   Serial.printf("Loaded %d playlists\n", numPlaylists);
-}
-
-// --- Playlist entry helpers ---
-
-void playlistAddEntry(int plIdx, int progIdx, unsigned long durMs) {
-  Playlist& pl = playlists[plIdx];
-  if (pl.numEntries >= MAX_PLAYLIST_ENTRIES) return;
-  initDefaultEntry(pl.entries[pl.numEntries], progIdx, durMs);
-  pl.numEntries++;
-  savePlaylistToNVS(plIdx);
-}
-
-void playlistRemoveEntry(int plIdx, int entryIdx) {
-  Playlist& pl = playlists[plIdx];
-  if (entryIdx < 0 || entryIdx >= pl.numEntries) return;
-  for (int i = entryIdx; i < pl.numEntries - 1; i++) {
-    pl.entries[i] = pl.entries[i + 1];
-  }
-  pl.numEntries--;
-  savePlaylistToNVS(plIdx);
-}
-
-void playlistMoveEntry(int plIdx, int entryIdx, int direction) {
-  Playlist& pl = playlists[plIdx];
-  int newIdx = entryIdx + direction;
-  if (newIdx < 0 || newIdx >= pl.numEntries) return;
-  PlaylistEntry tmp = pl.entries[entryIdx];
-  pl.entries[entryIdx] = pl.entries[newIdx];
-  pl.entries[newIdx] = tmp;
-  savePlaylistToNVS(plIdx);
-}
-
-int createNewPlaylist(const char* name) {
-  if (numPlaylists >= MAX_PLAYLISTS) return -1;
-  int idx = numPlaylists;
-  strncpy(playlists[idx].name, name, PLAYLIST_NAME_LEN - 1);
-  playlists[idx].name[PLAYLIST_NAME_LEN - 1] = '\0';
-  playlists[idx].numEntries = 0;
-  numPlaylists++;
-  savePlaylistToNVS(idx);
-  return idx;
 }
 
