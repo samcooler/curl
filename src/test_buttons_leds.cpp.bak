@@ -1,0 +1,107 @@
+// Test program for buttons (D0, D1, D2) and RGB LEDs (2x NeoPixel on D6)
+// Rename this to main.cpp (and rename main.cpp to main.cpp.bak) to use.
+//
+// Behavior:
+//   - D0 cycles LED 0 through: off → red → green → blue → white → off
+//   - D1 cycles LED 1 through: off → red → green → blue → white → off
+//   - D2 toggles both LEDs between dim (25) and bright (150)
+//   - Serial prints every button press and current state
+
+#include <Arduino.h>
+#include <Adafruit_NeoPixel.h>
+
+// 2 NeoPixel RGB LEDs on pin D6
+Adafruit_NeoPixel leds(2, D6, NEO_GRB + NEO_KHZ800);
+
+// Buttons on D0, D1, D2 (active-low with internal pull-up)
+const int BTN_PINS[] = {D0, D1, D2};
+bool lastBtnState[] = {HIGH, HIGH, HIGH};
+unsigned long lastBtnTime[] = {0, 0, 0};
+const unsigned long DEBOUNCE = 50;
+
+// LED state
+int ledColorIndex[] = {0, 0};  // 0=off, 1=red, 2=green, 3=blue, 4=white
+const int NUM_COLORS = 5;
+uint8_t brightness = 50;
+bool brightMode = false;
+
+const char* colorNames[] = {"Off", "Red", "Green", "Blue", "White"};
+
+uint32_t getColor(int index) {
+  switch (index) {
+    case 1: return leds.Color(255, 0, 0);     // red
+    case 2: return leds.Color(0, 255, 0);     // green
+    case 3: return leds.Color(0, 0, 255);     // blue
+    case 4: return leds.Color(255, 255, 255); // white
+    default: return leds.Color(0, 0, 0);      // off
+  }
+}
+
+void updateLEDs() {
+  leds.setPixelColor(0, getColor(ledColorIndex[0]));
+  leds.setPixelColor(1, getColor(ledColorIndex[1]));
+  leds.show();
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+  Serial.println("=== Button + LED Test ===");
+  Serial.println("D0: cycle LED 0 color");
+  Serial.println("D1: cycle LED 1 color");
+  Serial.println("D2: toggle brightness");
+
+  for (int i = 0; i < 3; i++) {
+    pinMode(BTN_PINS[i], INPUT_PULLUP);
+  }
+
+  leds.begin();
+  leds.setBrightness(brightness);
+  leds.show();
+
+  // Flash both LEDs through R/G/B on startup to confirm wiring
+  uint32_t startColors[] = {leds.Color(255,0,0), leds.Color(0,255,0), leds.Color(0,0,255)};
+  for (int c = 0; c < 3; c++) {
+    leds.setPixelColor(0, startColors[c]);
+    leds.setPixelColor(1, startColors[c]);
+    leds.show();
+    delay(300);
+  }
+  leds.clear();
+  leds.show();
+
+  Serial.println("Ready. Press buttons.");
+}
+
+void loop() {
+  unsigned long now = millis();
+
+  for (int i = 0; i < 3; i++) {
+    bool state = digitalRead(BTN_PINS[i]);
+    if (state == LOW && lastBtnState[i] == HIGH && (now - lastBtnTime[i]) > DEBOUNCE) {
+      lastBtnTime[i] = now;
+
+      if (i == 0) {
+        // D0: cycle LED 0 color
+        ledColorIndex[0] = (ledColorIndex[0] + 1) % NUM_COLORS;
+        Serial.printf("D0 pressed → LED 0: %s\n", colorNames[ledColorIndex[0]]);
+        updateLEDs();
+      }
+      else if (i == 1) {
+        // D1: cycle LED 1 color
+        ledColorIndex[1] = (ledColorIndex[1] + 1) % NUM_COLORS;
+        Serial.printf("D1 pressed → LED 1: %s\n", colorNames[ledColorIndex[1]]);
+        updateLEDs();
+      }
+      else if (i == 2) {
+        // D2: toggle brightness
+        brightMode = !brightMode;
+        brightness = brightMode ? 150 : 25;
+        leds.setBrightness(brightness);
+        Serial.printf("D2 pressed → Brightness: %d\n", brightness);
+        updateLEDs();
+      }
+    }
+    lastBtnState[i] = state;
+  }
+}
