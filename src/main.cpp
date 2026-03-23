@@ -624,6 +624,8 @@ void loop() {
       ESPUI.print(programStatusLabel, buildProgramStatus(progIdx));
     } else if (programRunning) {
       ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
+    } else {
+      ESPUI.print(programStatusLabel, "Stopped");
     }
   }
 }
