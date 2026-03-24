@@ -215,7 +215,8 @@ void startPlaylistEntry(int entryIdx) {
   }
 
   startProgram(progIdx);
-  ESPUI.print(programSelector, String(progIdx));
+  ESPUI.updateSelect(programSelector, String(progIdx));
+  Serial.printf("Playlist entry %d/%d: %s\n", entryIdx + 1, pl.numEntries, programs[progIdx].name);
 }
 
 void stopEverything() {
@@ -226,8 +227,9 @@ void stopEverything() {
   testRunning = false;
   allSolenoidsOff();
   setModulator(false);
-  ESPUI.print(programStatusLabel, "Stopped");
-  ESPUI.print(modeSelector, "0");
+  ESPUI.updateLabel(programStatusLabel, "Stopped");
+  ESPUI.updateSelect(modeSelector, "0");
+  Serial.println("stopEverything: all off, mode=Stop");
 }
 
 // --- Callbacks ---
@@ -235,6 +237,8 @@ void stopEverything() {
 void modeSelectCallback(Control* sender, int type) {
   int idx = sender->value.toInt();
   Mode newMode = (Mode)idx;
+  const char* modeNames[] = {"Stop", "Program", "Playlist"};
+  Serial.printf("GUI: Mode -> %s\n", modeNames[idx]);
   if (newMode == currentMode) return;
 
   // Stop current activity
@@ -248,11 +252,11 @@ void modeSelectCallback(Control* sender, int type) {
 
   switch (currentMode) {
     case MODE_STOP:
-      ESPUI.print(programStatusLabel, "Stopped");
+      ESPUI.updateLabel(programStatusLabel, "Stopped");
       break;
     case MODE_PROGRAM:
       startProgram(selectedProgram);
-      ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
+      ESPUI.updateLabel(programStatusLabel, buildProgramStatus(selectedProgram));
       break;
     case MODE_PLAYLIST:
       if (playlists[selectedPlaylist].numEntries > 0) {
@@ -265,6 +269,7 @@ void modeSelectCallback(Control* sender, int type) {
 void playlistSelectCallback(Control* sender, int type) {
   int idx = sender->value.toInt();
   if (idx >= 0 && idx < NUM_PLAYLISTS) {
+    Serial.printf("GUI: Playlist -> %s\n", playlists[idx].name);
     selectedPlaylist = idx;
     if (currentMode == MODE_PLAYLIST && playlists[idx].numEntries > 0) {
       startPlaylistEntry(0);
@@ -275,19 +280,25 @@ void playlistSelectCallback(Control* sender, int type) {
 void programSelectCallback(Control* sender, int type) {
   int idx = sender->value.toInt();
   if (idx < 0 || idx >= NUM_PROGRAMS) return;
-  if (currentMode == MODE_PLAYLIST) return; // playlist controls the program
+  if (currentMode == MODE_PLAYLIST) {
+    Serial.printf("GUI: Program select ignored (playlist mode)\n");
+    return;
+  }
+  Serial.printf("GUI: Program -> %s\n", programs[idx].name);
   selectedProgram = idx;
   showParamsForProgram(idx);
   if (currentMode == MODE_PROGRAM) {
     startProgram(idx);
-    ESPUI.print(programStatusLabel, buildProgramStatus(idx));
+    ESPUI.updateLabel(programStatusLabel, buildProgramStatus(idx));
   }
 }
 
 void paramSliderCallback(Control* sender, int type) {
   for (int i = 0; i < MAX_PARAMS; i++) {
     if (sender->id == paramSliders[i]) {
-      programs[selectedProgram].params[i].value = sender->value.toFloat();
+      float val = sender->value.toFloat();
+      programs[selectedProgram].params[i].value = val;
+      Serial.printf("GUI: Param %s = %.1f\n", programs[selectedProgram].params[i].name, val);
       break;
     }
   }
@@ -482,18 +493,18 @@ void setup() {
   }
 
   // Inject custom CSS via a label with a <style> tag (no setCustomCSS in v2.2.4)
-  static const char cssHack[] =
-    "<style>"
-    ".section{padding:0.5em !important;margin-bottom:0.4em !important}"
-    ".section h3{font-size:1.0em !important;margin-bottom:0.2em !important}"
-    ".section span{font-size:0.9em !important}"
-    ".section button{padding:0.3em 0.8em !important;font-size:0.85em !important;margin:0.15em !important}"
-    ".section select,.section input{font-size:0.9em !important;padding:0.2em !important}"
-    "#tabsnav{padding:0.3em !important}"
-    "#tabsnav button{padding:0.3em 0.6em !important;font-size:0.9em !important}"
-    "</style>";
-  uint16_t cssLabel = ESPUI.addControl(ControlType::Label, "", cssHack, ControlColor::None, Control::noParent);
-  ESPUI.setPanelStyle(cssLabel, "display:none;");
+  // static const char cssHack[] =
+  //   "<style>"
+  //   ".section{padding:0.5em !important;margin-bottom:0.4em !important}"
+  //   ".section h3{font-size:1.0em !important;margin-bottom:0.2em !important}"
+  //   ".section span{font-size:0.9em !important}"
+  //   ".section button{padding:0.3em 0.8em !important;font-size:0.85em !important;margin:0.15em !important}"
+  //   ".section select,.section input{font-size:0.9em !important;padding:0.2em !important}"
+  //   "#tabsnav{padding:0.3em !important}"
+  //   "#tabsnav button{padding:0.3em 0.6em !important;font-size:0.9em !important}"
+  //   "</style>";
+  // uint16_t cssLabel = ESPUI.addControl(ControlType::Label, "", cssHack, ControlColor::None, Control::noParent);
+  // ESPUI.setPanelStyle(cssLabel, "display:none;");
 
   // Start ESPUI
   ESPUI.begin("Curl Controller");
@@ -503,7 +514,7 @@ void setup() {
   selectedPlaylist = 1;
   currentMode = MODE_PLAYLIST;
   startPlaylistEntry(0);
-  ESPUI.print(modeSelector, "2");
+  ESPUI.updateSelect(modeSelector, "2");
   Serial.println("Auto-started Moderate playlist");
 }
 
@@ -536,8 +547,8 @@ void loop() {
     confirmPulseStart = now;
 
     // Update UI
-    ESPUI.print(modeSelector, "2");
-    ESPUI.print(playlistSelector, String(selectedPlaylist));
+    ESPUI.updateSelect(modeSelector, "2");
+    ESPUI.updateSelect(playlistSelector, String(selectedPlaylist));
     Serial.printf("Button: switched to playlist %d (%s)\n", selectedPlaylist, playlists[selectedPlaylist].name);
   }
   lastButtonState = btnState;
@@ -554,7 +565,7 @@ void loop() {
   if (programUIDirty) {
     programUIDirty = false;
     if (currentMode != MODE_STOP) {
-      ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
+      ESPUI.updateLabel(programStatusLabel, buildProgramStatus(selectedProgram));
     }
   }
 
@@ -622,9 +633,9 @@ void loop() {
       snprintf(buf2, sizeof(buf2), "&#9654; %s [%d/%d] %s  %lus / %lus",
         pl.name, currentEntry + 1, pl.numEntries, programs[progIdx].name, elapsed, total);
       String status = String(buf2) + "<br>" + buildProgramStatus(progIdx, "");
-      ESPUI.print(programStatusLabel, status);
+      ESPUI.updateLabel(programStatusLabel, status);
     } else if (currentMode == MODE_PROGRAM) {
-      ESPUI.print(programStatusLabel, buildProgramStatus(selectedProgram));
+      ESPUI.updateLabel(programStatusLabel, buildProgramStatus(selectedProgram));
     }
   }
 }
