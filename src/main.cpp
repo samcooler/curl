@@ -1,13 +1,17 @@
 #include <Arduino.h>
 #include <WiFi.h>
+#include <DNSServer.h>
 #include <ESPUI.h>
 #include <PCA9539.h>
 #include "programs.h"
 #include "playlists.h"
 
-// WiFi settings — connect to existing network
-const char* ssid = "Blossom 2.4 GHz";
-const char* password = "pollinate";
+// WiFi AP settings
+const char* ssid = "CURL";
+const char* password = "curlcurl";
+IPAddress apIP(192, 168, 4, 1);
+IPAddress subnet(255, 255, 255, 0);
+DNSServer dnsServer;
 
 // PCA9539 I2C GPIO expander for solenoids
 PCA9539 pca9539(0x77);
@@ -323,7 +327,7 @@ void stopAllCallback(Control* sender, int type) {
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);
+  delay(3000);
   Serial.println("Curl controller starting");
 
   // PCA9539 reset
@@ -355,34 +359,26 @@ void setup() {
   }
   Serial.println("Solenoids initialized");
 
-  // Connect to WiFi network
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to ");
+  // Start WiFi Access Point
+  WiFi.mode(WIFI_AP);
+  WiFi.softAPConfig(apIP, apIP, subnet);
+  WiFi.softAP(ssid, password);
+  Serial.print("AP started. SSID: ");
   Serial.print(ssid);
+  Serial.print("  IP: ");
+  Serial.println(WiFi.softAPIP());
 
-  unsigned long startAttempt = millis();
-  while (WiFi.status() != WL_CONNECTED && millis() - startAttempt < 15000) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println();
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.print("Connected! IP: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("WiFi connection failed - starting anyway");
-  }
+  // DNS server for captive portal
+  dnsServer.start(53, "*", apIP);
 
   // --- ESPUI Setup ---
 
   // Status tab
   uint16_t statusTab = ESPUI.addControl(ControlType::Tab, "Status", "Status");
   ipLabel = ESPUI.addControl(ControlType::Label, "IP Address",
-    WiFi.localIP().toString(), ControlColor::Turquoise, statusTab);
+    WiFi.softAPIP().toString(), ControlColor::Turquoise, statusTab);
   wifiStatusLabel = ESPUI.addControl(ControlType::Label, "WiFi Status",
-    WiFi.status() == WL_CONNECTED ? "Connected" : "Disconnected",
+    "AP Mode",
     ControlColor::Turquoise, statusTab);
   uptimeLabel = ESPUI.addControl(ControlType::Label, "Uptime",
     "0s", ControlColor::Turquoise, statusTab);
@@ -519,6 +515,7 @@ void setup() {
 }
 
 void loop() {
+  dnsServer.processNextRequest();
   unsigned long now = millis();
 
   // --- Playlist cycle button (D0, active-low) ---
@@ -616,12 +613,10 @@ void loop() {
     snprintf(buf, sizeof(buf), "%luh %lum %lus", hrs, mins % 60, secs % 60);
     ESPUI.updateLabel(uptimeLabel, buf);
 
-    if (WiFi.status() == WL_CONNECTED) {
-      ESPUI.updateLabel(wifiStatusLabel, "Connected");
-      ESPUI.updateLabel(ipLabel, WiFi.localIP().toString());
-    } else {
-      ESPUI.updateLabel(wifiStatusLabel, "Disconnected");
-    }
+    int clients = WiFi.softAPgetStationNum();
+    char apBuf[32];
+    snprintf(apBuf, sizeof(apBuf), "AP Mode (%d client%s)", clients, clients == 1 ? "" : "s");
+    ESPUI.updateLabel(wifiStatusLabel, apBuf);
 
     if (currentMode == MODE_PLAYLIST) {
       Playlist& pl = playlists[selectedPlaylist];
