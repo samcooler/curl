@@ -24,7 +24,8 @@ bool modulatorState = false;
 
 // Output mapping: logical channel index → physical PCA9539 pin index
 // Edit this array to match your wiring
-const int outputMap[NUM_SOLENOIDS] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+// const int outputMap[NUM_SOLENOIDS] = {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+const int outputMap[NUM_SOLENOIDS] = {0, 8, 2, 4, 9, 3, 11, 6, 7, 10, 5, 1};
 
 // Test sequence state
 bool testRunning = false;
