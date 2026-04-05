@@ -69,7 +69,7 @@ uint16_t paramSliderMax[MAX_PARAMS];
 
 // Program/playlist state
 int selectedProgram = 0;
-int selectedPlaylist = 1;  // default to Moderate
+int selectedPlaylist = 0;  // default to Moderate
 int currentEntry = 0;
 unsigned long entryStartTime = 0;
 
@@ -511,8 +511,8 @@ void setup() {
   selectedPlaylist = 1;
   currentMode = MODE_PLAYLIST;
   startPlaylistEntry(0);
-  ESPUI.updateSelect(modeSelector, "2");
-  Serial.println("Auto-started Moderate playlist");
+  ESPUI.updateSelect(modeSelector, "1");
+  Serial.println("Auto-started chill playlist");
 }
 
 void loop() {
